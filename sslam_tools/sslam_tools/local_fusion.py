@@ -28,7 +28,7 @@ from sklearn.cluster import DBSCAN
 import cv2
 from dataclasses import dataclass, fields
 
-from workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.geometry_functions_ import *
+from sslam_tools.geometry_functions_ import *
 
 @dataclass
 class LocalFusionConfig:

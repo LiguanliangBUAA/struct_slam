@@ -20,8 +20,8 @@
 import numpy as np
 import cv2
 
-from workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.detectors.detector import SSCollection
-from workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.detectors.imagebased_detector import ImageBasedDetector, ImageBasedDetectorConfig
+from sslam_tools.detectors.detector import SSCollection
+from sslam_tools.detectors.imagebased_detector import ImageBasedDetector, ImageBasedDetectorConfig
 from dataclasses import dataclass
 
 @dataclass

@@ -27,7 +27,7 @@ import os, cv2, time, psutil, threading, importlib
 from types import MappingProxyType
 
 from dataclasses import fields
-from workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.detectors.detector import SSCollection, Detector
+from sslam_tools.detectors.detector import SSCollection, Detector
 
 class Detectors_Node(Node):
     detectors_registry = MappingProxyType({

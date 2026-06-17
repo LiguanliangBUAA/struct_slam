@@ -19,16 +19,19 @@
 
 import os, cv2
 import numpy as np
-import workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.geometry_functions as geo_funcs
+import sslam_tools.geometry_functions as geo_funcs
+from ament_index_python.packages import get_package_share_directory
 
-from workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.detectors.detector import SSCollection
-from workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.detectors.imagebased_detector import ImageBasedDetector, ImageBasedDetectorConfig
+from sslam_tools.detectors.detector import SSCollection
+from sslam_tools.detectors.imagebased_detector import ImageBasedDetector, ImageBasedDetectorConfig
 from dataclasses import dataclass
 from ultralytics import YOLO
 
 @dataclass
 class YoloDetectorConfig(ImageBasedDetectorConfig):
-    yolo_model_path: str = 'install/sslam_tools/share/sslam_tools/resource/yolo_model'
+    # Relative paths are resolved against the package's installed share dir
+    # (resource/yolo_model); an absolute path overrides that.
+    yolo_model_path: str = ''
     yolo_model_name: str = 'YOLOv8n-obb_TRAINED_lgl_1_openvino_model'
 
     label: bool = True
@@ -37,10 +40,16 @@ class YoloDetector(ImageBasedDetector[YoloDetectorConfig]):
     def __init__(self, name: str, config: dict):
         super().__init__(name, config)
 
-        file_path = os.path.join(
-            self.config.yolo_model_path,
-            self.config.yolo_model_name
-        )
+        # Resolve the model directory so it works regardless of the launch CWD.
+        # Absolute config paths are used as-is; otherwise fall back to the
+        # package's installed resource/yolo_model directory.
+        if os.path.isabs(self.config.yolo_model_path):
+            model_dir = self.config.yolo_model_path
+        else:
+            model_dir = os.path.join(
+                get_package_share_directory('sslam_tools'), 'resource', 'yolo_model')
+
+        file_path = os.path.join(model_dir, self.config.yolo_model_name)
         self.yoloModel: YOLO = YOLO(file_path, task='obb')
         self.rgb_image: np.ndarray = np.empty((self.config.processed_img_size, self.config.processed_img_size, 3), dtype=np.uint8)
         self.yolo_results: list = []

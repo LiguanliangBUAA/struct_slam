@@ -19,7 +19,7 @@
 
 import numpy as np
 
-from workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.geometry_functions_ import distance_point_to_line, endpoints2polar, polar2endpoints
+from sslam_tools.geometry_functions_ import distance_point_to_line, endpoints2polar, polar2endpoints
 
 def calculate_map_metrics(pred_lines: np.ndarray, gt_lines: np.ndarray, 
                           dist_thresh=500.0, angle_thresh_deg=5.0, angle_weight=50.0,

@@ -22,8 +22,8 @@ import cv2
 from sklearn.cluster import DBSCAN
 from sklearn.linear_model import RANSACRegressor
 
-from workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.detectors.detector import Detector, DetectorConfig, SSCollection
-from workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.detectors.imagebased_detector import ImageBasedDetector
+from sslam_tools.detectors.detector import Detector, DetectorConfig, SSCollection
+from sslam_tools.detectors.imagebased_detector import ImageBasedDetector
 from dataclasses import dataclass
 
 @dataclass

@@ -18,7 +18,7 @@
 
 
 import numpy as np
-from workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.geometry_functions_ import polar2endpoints, intersection_cal_based_on_polar
+from sslam_tools.geometry_functions_ import polar2endpoints, intersection_cal_based_on_polar
 
 class GlobalWall:
     def __init__(self, id, rho, theta, d1, d2):

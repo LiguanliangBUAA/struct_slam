@@ -29,7 +29,7 @@ import cv2
 import datetime
 from ament_index_python.packages import get_package_share_directory
 
-from workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.calculate_metrics import calculate_map_metrics
+from sslam_tools.calculate_metrics import calculate_map_metrics
 
 def lines_to_dense_points(lines, step=1.0):
     all_points = []

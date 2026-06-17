@@ -21,7 +21,7 @@ import numpy as np
 import cv2
 
 from abc import abstractmethod
-from workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.detectors.detector import Detector, DetectorConfig, SSCollection
+from sslam_tools.detectors.detector import Detector, DetectorConfig, SSCollection
 from dataclasses import dataclass, field
 from typing import TypeVar, Generic
 

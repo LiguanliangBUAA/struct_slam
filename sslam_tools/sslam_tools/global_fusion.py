@@ -37,8 +37,8 @@ import math
 from dataclasses import dataclass, fields
 from scipy.optimize import linear_sum_assignment
 
-from workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.global_fusion_class import GlobalWall, GlobalColumn, ManhattanWorldOptimizer
-from workspace.src.dps_slam.struct_slam.sslam_tools.sslam_tools.geometry_functions_ import polar2endpoints, distance_point_to_line
+from sslam_tools.global_fusion_class import GlobalWall, GlobalColumn, ManhattanWorldOptimizer
+from sslam_tools.geometry_functions_ import polar2endpoints, distance_point_to_line
 
 @dataclass
 class GlobalFusionConfig:
