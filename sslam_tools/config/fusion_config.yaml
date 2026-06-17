@@ -33,7 +33,7 @@
     sensor_posy: 800
 
     movement_flag: true
-    map_frame: 'drone0/map' # 'camera_init' # 'drone0/map'
-    lidar_frame: 'drone0/base_link' # 'body' # 'drone0/base_link'
+    map_frame: 'drone0/odom' # 'camera_init' # 'drone0/map'
+    lidar_frame: 'livox_frame' # 'body' # 'drone0/base_link'
 
     manhattan_opt_flag: true

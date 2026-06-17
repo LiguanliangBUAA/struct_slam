@@ -22,15 +22,17 @@ from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch_ros.actions import SetParameter
+from launch.actions import DeclareLaunchArgument
 
 def generate_launch_description():
     detectors_config = os.path.join(get_package_share_directory('sslam_tools'), 'config', 'detectors_config.yaml')
     lidar_config = os.path.join(get_package_share_directory('sslam_tools'), 'config', 'lidar_config.yaml')
     fusion_config = os.path.join(get_package_share_directory('sslam_tools'), 'config', 'fusion_config.yaml')
-
+    use_sim_time_arg = DeclareLaunchArgument(
+        'use_sim_time', description='Use simulation clock', default_value='false')
+    
     return LaunchDescription([
-        SetParameter(name='use_sim_time', value=True),
+        use_sim_time_arg,
         Node(
             package='coord_conversion_cpp',
             executable='converter_livox',
