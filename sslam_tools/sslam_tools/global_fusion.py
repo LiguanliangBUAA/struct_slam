@@ -26,7 +26,7 @@ from msg_interfaces.msg import MapElementswithDistance
 from msg_interfaces.msg import Wall
 import tf2_ros
 
-from geometry_msgs.msg import PoseWithCovariance
+from geometry_msgs.msg import PoseWithCovariance, Point
 from dps_slam_msgs.msg import DetectionWithIDArray, DetectionWithID, Geometry
 from dps_slam_msgs.msg import Line2D, Cylinder
 
@@ -411,7 +411,7 @@ class GlobalFusionNode(Node):
                     target_frame=self.config.map_frame,
                     source_frame=self.config.lidar_frame,
                     time=current_time,
-                    timeout=rclpy.duration.Duration(seconds=0.05)
+                    timeout=rclpy.duration.Duration(seconds=0.1)
                 )
 
                 raw_x = trans.transform.translation.x * 100.0 # m -> cm
@@ -627,6 +627,13 @@ class GlobalFusionNode(Node):
             s_dt = float(cov_matrix[0, 1]) / 100.0     # (m*rad)
             s_dd = float(cov_matrix[0, 0]) / 10000.0   # (m^2)
             line_msg.covariance = [s_tt, s_td, s_dt, s_dd]
+
+            # Segment limits: endpoints in the local frame (cm -> m, z = 0).
+            x1, y1, x2, y2 = polar2endpoints(np.asarray(rel_wall, dtype=float))
+            line_msg.boundary = [
+                Point(x=x1 / 100.0, y=y1 / 100.0, z=0.0),
+                Point(x=x2 / 100.0, y=y2 / 100.0, z=0.0),
+            ]
 
             geom.line = line_msg
             det.geometry = geom
