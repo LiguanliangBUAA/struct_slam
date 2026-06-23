@@ -1,7 +1,7 @@
 detector_node:
   ros__parameters:
     detector_type: "yolo"
-    capture_inference_image: false
+    capture_inference_image: true
 
     # Leave empty to load from the installed package share (resource/yolo_model).
     # Set an absolute path here to load a model from elsewhere.

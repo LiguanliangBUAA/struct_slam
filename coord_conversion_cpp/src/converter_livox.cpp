@@ -2,7 +2,6 @@
 #include <vector>
 #include "rclcpp/rclcpp.hpp"
 #include "msg_interfaces/msg/lidar_data.hpp"
-
 #include "livox_ros_driver2/msg/custom_msg.hpp"
 #include "elevation_grid_filter.hpp"
 
@@ -17,6 +16,7 @@ public:
   converter()
   : Node("converter"), packet_counter_(0)
   {
+    this->declare_parameter("input_type", "custom_msg"); // custom_msg / pointcloud2
     this->declare_parameter("height_filter_flag", "normal"); // normal / elevation_grid_filter
     // Height filtering parameters
     this->declare_parameter("MIN_Z", 0.0); // mm
@@ -31,6 +31,7 @@ public:
     this->declare_parameter("accumulate_packets", 10); 
     this->declare_parameter("publish_pointcloud", false);
     
+    this->input_type_ = this->get_parameter("input_type").as_string();
     this->height_filter_flag_ = this->get_parameter("height_filter_flag").as_string();
     this->min_z_ = static_cast<float>(this->get_parameter("MIN_Z").as_double());
     this->max_z_ = static_cast<float>(this->get_parameter("MAX_Z").as_double());
@@ -41,8 +42,15 @@ public:
     this->accumulate_packets_ = this->get_parameter("accumulate_packets").as_int();
     this->publish_pointcloud_ = this->get_parameter("publish_pointcloud").as_bool();
 
-    this->subscription_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
-      "/livox/lidar", rclcpp::SensorDataQoS(), std::bind(&converter::topic_callback, this, _1));
+    if (input_type_ == "custom_msg") {
+      this->subscription_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
+        "/livox/lidar", rclcpp::SensorDataQoS(), std::bind(&converter::topic_callback, this, _1));
+    } else if (input_type_ == "pointcloud2") {
+      this->pc2_subscription_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/livox/points", rclcpp::SensorDataQoS(), std::bind(&converter::pointcloud2_callback, this, _1));
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "Unknown input_type: %s", input_type_.c_str());
+    }
 
     this->publisher_ = this->create_publisher<msg_interfaces::msg::LidarData>("lidar_data", 10);
 
@@ -65,6 +73,7 @@ public:
   }
 
 private:
+  std::string input_type_;
   std::string height_filter_flag_;
   float min_z_; // mm
   float max_z_;
@@ -86,6 +95,7 @@ private:
   std::unique_ptr<elevation_grid_filter::ElevationGridFilter> grid_filter_;
 
   rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr subscription_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pc2_subscription_;
   rclcpp::Publisher<msg_interfaces::msg::LidarData>::SharedPtr publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr publisher_cloud_;
 
@@ -101,6 +111,30 @@ private:
         }
     }
 
+    process_points(msg->header);
+  }
+
+  void pointcloud2_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+  {
+    sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_y(*msg, "y");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
+
+    for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z) {
+        if (*iter_z * scale_to_mm_ >= min_z_ && *iter_z * scale_to_mm_ <= max_z_) {
+            raw_x_.push_back(*iter_x * scale_to_mm_);
+            raw_y_.push_back(*iter_y * scale_to_mm_);
+            if (height_filter_flag_ == "elevation_grid_filter" || publish_pointcloud_) {
+              raw_z_.push_back(*iter_z * scale_to_mm_);
+            }
+        }
+    }
+
+    process_points(msg->header);
+  }
+
+  void process_points(const std_msgs::msg::Header & header)
+  {
     packet_counter_++;
 
     if (packet_counter_ >= accumulate_packets_) {
@@ -114,7 +148,7 @@ private:
 
       auto message = std::make_unique<msg_interfaces::msg::LidarData>();
       
-      message->header = msg->header; // Frame name: livox_frame
+      message->header = header; // Frame name: livox_frame
       message->x_data = filtered_x_;
       message->y_data = filtered_y_;
       this->publisher_->publish(std::move(message));
@@ -123,7 +157,7 @@ private:
       {
         auto pc2_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
 
-        pc2_msg->header = msg->header; // Frame name: livox_frame
+        pc2_msg->header = header; // Frame name: livox_frame
         // pc2_msg->header.stamp = this->get_clock()->now();
         // pc2_msg->header.frame_id = "spheric_frame";
         pc2_msg->height = 1;
