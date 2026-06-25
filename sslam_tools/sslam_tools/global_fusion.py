@@ -329,6 +329,7 @@ class GlobalFusionNode(Node):
             delta_yaw = np.median(yaw_errors)
             if abs(delta_yaw) < np.deg2rad(15.0):
                 self.robot_yaw = (self.robot_yaw + delta_yaw * 0.1) % (2 * np.pi)
+                # pass
 
         Aw, Bw = [], []
         for l_idx, g_idx in matched_pairs:
@@ -398,6 +399,7 @@ class GlobalFusionNode(Node):
             if correction_dist < 20.0:
                 self.robot_x += delta_pos[0]
                 self.robot_y += delta_pos[1]
+                # pass
 
         final_matches = [(l_idx, candidate_globals[g_idx].id) for l_idx, g_idx in matched_pairs]
         return final_matches, unmatched_local_indices
@@ -438,7 +440,7 @@ class GlobalFusionNode(Node):
 
             except tf2_ros.TransformException as ex:
                 self.get_logger().warn(f"TF transform failed: {ex}")
-                pass
+                return
 
         self.robot_trajectory.append((self.robot_x, self.robot_y))
 

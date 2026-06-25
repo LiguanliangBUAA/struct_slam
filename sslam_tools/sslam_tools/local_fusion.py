@@ -123,45 +123,48 @@ class LocalFusionNode(Node):
             except ValueError as e:
                 self.get_logger().warn(f'Invalid wall endpoints at index {idx}: {e}')
         valid_endpoints = endpoints[valid_indices]
-        # DBSCAN Clustering
-        polar_data = np.array(polar_list, dtype=np.float32)  # Shape: (N, 4)
-        dist_matrix = self.compute_distance_matrix(valid_endpoints)
-        clustering = DBSCAN(eps=self.config.eps, min_samples=self.config.min_samples, metric='precomputed')
-        labels = clustering.fit_predict(dist_matrix)
-        # Fuse based on clusters
         fused_endpoints = []
         fused_polar_params = []
-        unique_labels = set(labels)
-        for label in unique_labels:
-            if label == -1:
-                continue
-            class_member_mask = (labels == label)
-            cluster_data = polar_data[class_member_mask]
-            # Simple fusion: average the polar coordinates
-            mean_d = np.mean(cluster_data[:, 0])
-            sin_sum = np.sum(np.sin(cluster_data[:, 1]))
-            cos_sum = np.sum(np.cos(cluster_data[:, 1]))
-            mean_alpha = np.arctan2(sin_sum, cos_sum) % (2 * np.pi)
+        if len(valid_endpoints) > 0:
+            # DBSCAN Clustering
+            polar_data = np.array(polar_list, dtype=np.float32)  # Shape: (N, 4)
+            dist_matrix = self.compute_distance_matrix(valid_endpoints)
+            clustering = DBSCAN(eps=self.config.eps, min_samples=self.config.min_samples, metric='precomputed')
+            labels = clustering.fit_predict(dist_matrix)
+            # Fuse based on clusters
+            fused_endpoints = []
+            fused_polar_params = []
+            unique_labels = set(labels)
+            for label in unique_labels:
+                if label == -1:
+                    continue
+                class_member_mask = (labels == label)
+                cluster_data = polar_data[class_member_mask]
+                # Simple fusion: average the polar coordinates
+                mean_d = np.mean(cluster_data[:, 0])
+                sin_sum = np.sum(np.sin(cluster_data[:, 1]))
+                cos_sum = np.sum(np.cos(cluster_data[:, 1]))
+                mean_alpha = np.arctan2(sin_sum, cos_sum) % (2 * np.pi)
 
-            p0_x = mean_d * np.cos(mean_alpha)
-            p0_y = mean_d * np.sin(mean_alpha)
-            dir_x = -np.sin(mean_alpha)
-            dir_y = np.cos(mean_alpha)
-            projected_lengths = []
-            for row in cluster_data:
-                raw_endpoints = polar2endpoints(row)
-                x1, y1, x2, y2 = raw_endpoints
-                proj_1 = (x1 - p0_x) * dir_x + (y1 - p0_y) * dir_y
-                proj_2 = (x2 - p0_x) * dir_x + (y2 - p0_y) * dir_y
-                projected_lengths.append(proj_1)
-                projected_lengths.append(proj_2)
-            min_d1 = min(projected_lengths)
-            max_d2 = max(projected_lengths)
-            fused_endpoints.append([mean_d, mean_alpha, min_d1, max_d2])
-            # wall_len = max_d2 - min_d1
+                p0_x = mean_d * np.cos(mean_alpha)
+                p0_y = mean_d * np.sin(mean_alpha)
+                dir_x = -np.sin(mean_alpha)
+                dir_y = np.cos(mean_alpha)
+                projected_lengths = []
+                for row in cluster_data:
+                    raw_endpoints = polar2endpoints(row)
+                    x1, y1, x2, y2 = raw_endpoints
+                    proj_1 = (x1 - p0_x) * dir_x + (y1 - p0_y) * dir_y
+                    proj_2 = (x2 - p0_x) * dir_x + (y2 - p0_y) * dir_y
+                    projected_lengths.append(proj_1)
+                    projected_lengths.append(proj_2)
+                min_d1 = min(projected_lengths)
+                max_d2 = max(projected_lengths)
+                fused_endpoints.append([mean_d, mean_alpha, min_d1, max_d2])
+                # wall_len = max_d2 - min_d1
 
-            wall_segment: np.ndarray = polar2endpoints(np.array([mean_d, mean_alpha, min_d1, max_d2]))
-            fused_polar_params.append([mean_d, mean_alpha, *wall_segment])
+                wall_segment: np.ndarray = polar2endpoints(np.array([mean_d, mean_alpha, min_d1, max_d2]))
+                fused_polar_params.append([mean_d, mean_alpha, *wall_segment])
 
         fused_map.num_walls = len(fused_endpoints)
         fused_map.wall_parameters = np.array(fused_endpoints, dtype=np.float32).flatten().tolist()
