@@ -9,7 +9,7 @@
     wall_connection_threshold: 15.0
     wall_length_threshold: 50.0
 
-    publish_img_flag: false
+    publish_img_flag: true
     processed_img_size: 640
     base_img_size: 2048
     sensor_posx: 1024
@@ -33,7 +33,7 @@
     sensor_posy: 800
 
     movement_flag: true
-    map_frame: 'map' # 'camera_init' # 'drone0/map'
-    lidar_frame: 'base_link' # 'body' # 'drone0/base_link'
+    map_frame: 'odom' # 'camera_init' # 'drone0/map'
+    lidar_frame: 'livox_frame' # 'body' # 'drone0/base_link'
 
     manhattan_opt_flag: true

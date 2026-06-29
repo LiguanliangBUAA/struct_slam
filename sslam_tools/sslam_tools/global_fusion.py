@@ -26,7 +26,7 @@ from msg_interfaces.msg import MapElementswithDistance
 from msg_interfaces.msg import Wall
 import tf2_ros
 
-from geometry_msgs.msg import PoseWithCovariance, Point
+from geometry_msgs.msg import PoseWithCovariance, Point, Quaternion
 from dps_slam_msgs.msg import DetectionWithIDArray, DetectionWithID, Geometry
 from dps_slam_msgs.msg import Line2D, Cylinder
 
@@ -36,6 +36,7 @@ import cv2
 import math
 from dataclasses import dataclass, fields
 from scipy.optimize import linear_sum_assignment
+from scipy.spatial.transform import Rotation as R_sci
 
 from sslam_tools.global_fusion_class import GlobalWall, GlobalColumn, ManhattanWorldOptimizer
 from sslam_tools.geometry_functions_ import polar2endpoints, distance_point_to_line
@@ -95,6 +96,10 @@ class GlobalFusionNode(Node):
         self.robot_x = 0.0
         self.robot_y = 0.0
         self.robot_yaw = 0.0
+
+        self.robot_q = Quaternion()
+        self.robot_q.w = 1.0
+
         self.last_msg_time = None
 
         # Record last TF for movement compensation
@@ -195,11 +200,14 @@ class GlobalFusionNode(Node):
         P2 = np.array([x2_1, y2_1])
         Q1 = np.array([x1_2, y1_2])
         Q2 = np.array([x2_2, y2_2])
-        dis1_1 = distance_point_to_line(P1, Q1, Q2)
-        dis1_2 = distance_point_to_line(P2, Q1, Q2)
-        dis2_1 = distance_point_to_line(Q1, P1, P2)
-        dis2_2 = distance_point_to_line(Q2, P1, P2)
-        delta_dis = min(dis1_1, dis1_2, dis2_1, dis2_2)
+        # dis1_1 = distance_point_to_line(P1, Q1, Q2)
+        # dis1_2 = distance_point_to_line(P2, Q1, Q2)
+        # dis2_1 = distance_point_to_line(Q1, P1, P2)
+        # dis2_2 = distance_point_to_line(Q2, P1, P2)
+        # delta_dis = min(dis1_1, dis1_2, dis2_1, dis2_2)
+        dist1 = distance_point_to_line(P1, Q1, Q2)
+        dist2 = distance_point_to_line(P2, Q1, Q2)
+        delta_dis = (dist1 + dist2) / 2.0
         incli_new = np.arctan2(y2_1 - y1_1, x2_1 - x1_1) % (2 * np.pi)
         incli_g = np.arctan2(y2_2 - y1_2, x2_2 - x1_2) % (2 * np.pi)
         diff = abs(incli_new - incli_g) % np.pi
@@ -290,13 +298,14 @@ class GlobalFusionNode(Node):
 
         cost_matrix = np.full((N + M, N + M), np.inf)
 
+        # Compute cost matrix
         for i in range(N):
             for j in range(M):
                 gw_array = np.array([candidate_globals[j].rho, candidate_globals[j].theta, candidate_globals[j].d1, candidate_globals[j].d2])
                 cost = self.compute_cost(pred_global_walls[i], gw_array)
                 if cost < gate:
                     cost_matrix[i, j] = cost
-
+        # Dummy nodes for unmatched local and global walls
         for i in range(N): cost_matrix[i, M + i] = gate
         for j in range(M): cost_matrix[N + j, j] = gate
         cost_matrix[N:, M:] = 0.0
@@ -314,39 +323,40 @@ class GlobalFusionNode(Node):
             elif r < N and c >= M:
                 unmatched_local_indices.append(r)
 
-        yaw_errors = []
-        for l_idx, g_idx in matched_pairs:
-            if candidate_globals[g_idx].hits >= 2:
-                l_theta = raw_local_walls[l_idx][1]
-                g_theta = candidate_globals[g_idx].theta
-                e_yaw = g_theta - l_theta - self.robot_yaw
-                e_yaw = (e_yaw + np.pi) % (2 * np.pi) - np.pi
-                if e_yaw > np.pi / 2: e_yaw -= np.pi
-                elif e_yaw < -np.pi / 2: e_yaw += np.pi
-                yaw_errors.append(e_yaw)
+        # yaw_errors = []
+        # for l_idx, g_idx in matched_pairs:
+        #     if candidate_globals[g_idx].hits >= 2:
+        #         l_theta = raw_local_walls[l_idx][1]
+        #         g_theta = candidate_globals[g_idx].theta
+        #         e_yaw = g_theta - l_theta - self.robot_yaw
+        #         e_yaw = (e_yaw + np.pi) % (2 * np.pi) - np.pi
+        #         if e_yaw > np.pi / 2: e_yaw -= np.pi
+        #         elif e_yaw < -np.pi / 2: e_yaw += np.pi
+        #         yaw_errors.append(e_yaw)
         
-        if yaw_errors:
-            delta_yaw = np.median(yaw_errors)
-            if abs(delta_yaw) < np.deg2rad(15.0):
-                self.robot_yaw = (self.robot_yaw + delta_yaw * 0.1) % (2 * np.pi)
-                # pass
+        # if yaw_errors:
+        #     delta_yaw = np.median(yaw_errors)
+        #     if abs(delta_yaw) < np.deg2rad(15.0):
+        #         # self.robot_yaw = (self.robot_yaw + delta_yaw * 0.1) % (2 * np.pi)
+        #         pass
 
-        Aw, Bw = [], []
-        for l_idx, g_idx in matched_pairs:
-            g_wall = candidate_globals[g_idx]
-            if g_wall.hits >= 2:
-                l_tho = raw_local_walls[l_idx][0]
-                l_theta = raw_local_walls[l_idx][1]
+        # Aw, Bw = [], []
+        # for l_idx, g_idx in matched_pairs:
+        #     g_wall = candidate_globals[g_idx]
+        #     if g_wall.hits >= 2:
+        #         l_tho = raw_local_walls[l_idx][0]
+        #         l_theta = raw_local_walls[l_idx][1]
 
-                temp_g_theta = l_theta + self.robot_yaw
-                nx, ny = np.cos(temp_g_theta), np.sin(temp_g_theta)
-                expected_rho = l_tho + self.robot_x * nx + self.robot_y * ny
-                error_rho = g_wall.rho - expected_rho
+        #         temp_g_theta = l_theta + self.robot_yaw
+        #         nx, ny = np.cos(temp_g_theta), np.sin(temp_g_theta)
+        #         expected_rho = l_tho + self.robot_x * nx + self.robot_y * ny
+        #         error_rho = g_wall.rho - expected_rho
 
-                weight = (g_wall.d2 - g_wall.d1) / 100.0
-                Aw.append([nx * weight, ny * weight])
-                Bw.append(error_rho * weight)
+        #         weight = (g_wall.d2 - g_wall.d1) / 100.0
+        #         Aw.append([nx * weight, ny * weight])
+        #         Bw.append(error_rho * weight)
 
+        # Corner-based SVD correction
         num_matches = len(matched_pairs)
         corner_weight = 5.0
         for i in range(num_matches):
@@ -371,35 +381,35 @@ class GlobalFusionNode(Node):
                 global_pt = self.get_corner_intersection(g_w1_arr, g_w2_arr, max_gap=self.config.corner_max_gap)
                 if global_pt is None: continue
 
-                lx, ly = local_pt
-                cos_y, sin_y = np.cos(self.robot_yaw), np.sin(self.robot_yaw)
-                exp_x = lx * cos_y - ly * sin_y + self.robot_x
-                exp_y = lx * sin_y + ly * cos_y + self.robot_y
+                # lx, ly = local_pt
+                # cos_y, sin_y = np.cos(self.robot_yaw), np.sin(self.robot_yaw)
+                # exp_x = lx * cos_y - ly * sin_y + self.robot_x
+                # exp_y = lx * sin_y + ly * cos_y + self.robot_y
 
-                gx, gy = global_pt
+                # gx, gy = global_pt
 
-                Aw.append([1.0 * corner_weight, 0.0])
-                Bw.append((gx - exp_x) * corner_weight)
-                Aw.append([0.0, 1.0 * corner_weight])
-                Bw.append((gy - exp_y) * corner_weight)
+                # Aw.append([1.0 * corner_weight, 0.0])
+                # Bw.append((gx - exp_x) * corner_weight)
+                # Aw.append([0.0, 1.0 * corner_weight])
+                # Bw.append((gy - exp_y) * corner_weight)
                 self.active_debug_corners.append(global_pt)
 
-        Aw, Bw = np.array(Aw), np.array(Bw)
+        # Aw, Bw = np.array(Aw), np.array(Bw)
 
-        if len(Aw) >= 2:
-            U, S, Vt = np.linalg.svd(Aw, full_matrices=False)
-            inv_S = np.zeros_like(S)
+        # if len(Aw) >= 2:
+        #     U, S, Vt = np.linalg.svd(Aw, full_matrices=False)
+        #     inv_S = np.zeros_like(S)
 
-            for i in range(len(S)):
-                if S[i] > 0.1:
-                    inv_S[i] = S[i] / (S[i]**2 + self.config.svd_lambda_reg)
+        #     for i in range(len(S)):
+        #         if S[i] > 0.1:
+        #             inv_S[i] = S[i] / (S[i]**2 + self.config.svd_lambda_reg)
             
-            delta_pos = Vt.T @ np.diag(inv_S) @ U.T @ Bw
-            correction_dist = np.hypot(delta_pos[0], delta_pos[1])
-            if correction_dist < 20.0:
-                self.robot_x += delta_pos[0]
-                self.robot_y += delta_pos[1]
-                # pass
+        #     delta_pos = Vt.T @ np.diag(inv_S) @ U.T @ Bw
+        #     correction_dist = np.hypot(delta_pos[0], delta_pos[1])
+        #     if correction_dist < 20.0:
+        #         # self.robot_x += delta_pos[0]
+        #         # self.robot_y += delta_pos[1]
+        #         pass
 
         final_matches = [(l_idx, candidate_globals[g_idx].id) for l_idx, g_idx in matched_pairs]
         return final_matches, unmatched_local_indices
@@ -418,9 +428,9 @@ class GlobalFusionNode(Node):
 
                 raw_x = trans.transform.translation.x * 100.0 # m -> cm
                 raw_y = trans.transform.translation.y * 100.0
-                q = trans.transform.rotation
-                raw_yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-                
+                self.robot_q = trans.transform.rotation
+                raw_yaw = math.atan2(2.0 * (self.robot_q.w * self.robot_q.z + self.robot_q.x * self.robot_q.y), 1.0 - 2.0 * (self.robot_q.y * self.robot_q.y + self.robot_q.z * self.robot_q.z))
+
                 if self.is_first_frame:
                     self.robot_x, self.robot_y, self.robot_yaw = raw_x, raw_y, raw_yaw
                     self.last_tf_x, self.last_tf_y, self.last_tf_yaw = raw_x, raw_y, raw_yaw
@@ -443,7 +453,6 @@ class GlobalFusionNode(Node):
                 return
 
         self.robot_trajectory.append((self.robot_x, self.robot_y))
-
         self.last_msg_time = current_time
 
         local_walls_data = np.array(msg.wall_parameters, dtype=np.float32).reshape(-1, 4)
@@ -470,7 +479,8 @@ class GlobalFusionNode(Node):
                 target_wall.recalculate_endpoints_on_line(polar2endpoints(final_global_walls_data[l_idx]))
                 matched_global_ids.add(target_wall.id)
 
-                current_frame_wall_obs.append((target_wall.id, local_walls_data[l_idx], target_wall.covariance_mea))
+                if target_wall.hits >= 5:
+                    current_frame_wall_obs.append((target_wall.id, local_walls_data[l_idx], target_wall.covariance_mea))
 
         for l_idx in unmatched_local_indices:
             new_rho, new_theta, new_d1, new_d2 = final_global_walls_data[l_idx]
@@ -478,7 +488,7 @@ class GlobalFusionNode(Node):
             self.global_walls.append(new_wall)
             matched_global_ids.add(new_wall.id)
 
-            current_frame_wall_obs.append((new_wall.id, local_walls_data[l_idx], new_wall.covariance_mea))
+            # current_frame_wall_obs.append((new_wall.id, local_walls_data[l_idx], new_wall.covariance_mea))
             self.next_wall_id += 1
 
         # Process columns' elements
@@ -548,7 +558,7 @@ class GlobalFusionNode(Node):
             self.optimizer.apply_global_topology(self.global_walls)
 
         # Publish global fusion result to G2O
-        self.publish_to_g2o(msg.header, current_frame_wall_obs, current_frame_column_obs)
+        self.publish_to_g2o(msg.header, current_frame_wall_obs, current_frame_column_obs, self.robot_q)
 
         # self.robot_trajectory.append((self.robot_x, self.robot_y))
         
@@ -599,28 +609,35 @@ class GlobalFusionNode(Node):
                 return True
         return False
     
-    def publish_to_g2o(self, header, current_frame_wall_obs: list, current_frame_column_obs: list):
+    def publish_to_g2o(self, header, current_frame_wall_obs: list, current_frame_column_obs: list, robot_q):
         obs_array_msg = DetectionWithIDArray()
         obs_array_msg.header = header
 
+        r_mat = R_sci.from_quat([robot_q.x, robot_q.y, robot_q.z, robot_q.w]).as_matrix()
+        r_inv = r_mat.T
+
         # wall -> Line2D
         for w_id, rel_wall, cov_matrix in current_frame_wall_obs:
+
             det = DetectionWithID()
             det.id = f"{w_id}"
             det.label = "wall"
 
             geom = Geometry()
             geom.type = Geometry.LINE
-            
             line_msg = Line2D()
             
             # Local coordinates (cm -> m)
             local_rho = float(rel_wall[0])
             local_theta = float(rel_wall[1])
-            
-            line_msg.normal.x = math.cos(local_theta)
-            line_msg.normal.y = math.sin(local_theta)
-            line_msg.normal.z = 0.0
+
+            global_yaw = local_theta + self.robot_yaw
+            N_global = np.array([math.cos(global_yaw), math.sin(global_yaw), 0.0])
+            N_local = r_inv @ N_global
+
+            line_msg.normal.x = N_local[0]
+            line_msg.normal.y = N_local[1]
+            line_msg.normal.z = N_local[2]
             line_msg.distance = local_rho / 100.0
             
             # Covariance (cm -> m)
@@ -662,10 +679,10 @@ class GlobalFusionNode(Node):
             cyl_msg.pose.pose.position.z = 0.0
             
             # No rotation
-            cyl_msg.pose.pose.orientation.w = 1.0
-            cyl_msg.pose.pose.orientation.x = 0.0
-            cyl_msg.pose.pose.orientation.y = 0.0
-            cyl_msg.pose.pose.orientation.z = 0.0
+            cyl_msg.pose.pose.orientation.w = robot_q.w
+            cyl_msg.pose.pose.orientation.x = -robot_q.x
+            cyl_msg.pose.pose.orientation.y = -robot_q.y
+            cyl_msg.pose.pose.orientation.z = -robot_q.z
             
             # 6x6 Matrix covariance for pose (x, y, z, roll, pitch, yaw)
             cov_6x6 = [0.0] * 36
