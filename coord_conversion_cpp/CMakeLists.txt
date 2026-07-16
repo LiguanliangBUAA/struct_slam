@@ -12,6 +12,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(msg_interfaces REQUIRED)
 find_package(livox_ros_driver2 REQUIRED)
@@ -25,7 +26,7 @@ target_compile_features(converter PUBLIC c_std_99 cxx_std_17)  # Require C99 and
 ament_target_dependencies(converter rclcpp std_msgs sensor_msgs Eigen3 msg_interfaces)
 
 add_executable(converter_livox src/converter_livox.cpp)
-ament_target_dependencies(converter_livox rclcpp msg_interfaces sensor_msgs livox_ros_driver2)
+ament_target_dependencies(converter_livox rclcpp msg_interfaces sensor_msgs nav_msgs Eigen3 livox_ros_driver2)
 
 install(TARGETS
   converter 

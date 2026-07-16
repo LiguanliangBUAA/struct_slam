@@ -17,9 +17,9 @@
 
 /global_fusion_node:
   ros__parameters:
-    match_dist_thresh: 80.0 # cm
-    match_angle_thresh_deg: 15.0 # deg
-    overlap_thresh: 50.0 # cm
+    match_dist_thresh: 20.0 # cm
+    match_angle_thresh_deg: 5.0 # deg
+    overlap_thresh: 10.0 # cm
     gate_threshold: 0.8
     max_misses_thresh: 5
     sensor_range: 500.0 # cm
@@ -33,7 +33,7 @@
     sensor_posy: 800
 
     movement_flag: true
-    map_frame: 'odom' # 'camera_init' # 'drone0/map'
+    map_frame: 'map' # 'camera_init' # 'drone0/map'
     lidar_frame: 'livox_frame' # 'body' # 'drone0/base_link'
 
     manhattan_opt_flag: true

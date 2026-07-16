@@ -20,13 +20,13 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
-# from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry
 # from geometry_msgs.msg import Pose
 from msg_interfaces.msg import MapElementswithDistance
 from msg_interfaces.msg import Wall
 import tf2_ros
 
-from geometry_msgs.msg import PoseWithCovariance, Point, Quaternion
+from geometry_msgs.msg import PoseWithCovariance, Point
 from dps_slam_msgs.msg import DetectionWithIDArray, DetectionWithID, Geometry
 from dps_slam_msgs.msg import Line2D, Cylinder
 
@@ -96,9 +96,6 @@ class GlobalFusionNode(Node):
         self.robot_x = 0.0
         self.robot_y = 0.0
         self.robot_yaw = 0.0
-
-        self.robot_q = Quaternion()
-        self.robot_q.w = 1.0
 
         self.last_msg_time = None
 
@@ -428,8 +425,8 @@ class GlobalFusionNode(Node):
 
                 raw_x = trans.transform.translation.x * 100.0 # m -> cm
                 raw_y = trans.transform.translation.y * 100.0
-                self.robot_q = trans.transform.rotation
-                raw_yaw = math.atan2(2.0 * (self.robot_q.w * self.robot_q.z + self.robot_q.x * self.robot_q.y), 1.0 - 2.0 * (self.robot_q.y * self.robot_q.y + self.robot_q.z * self.robot_q.z))
+                q = trans.transform.rotation
+                raw_yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
                 if self.is_first_frame:
                     self.robot_x, self.robot_y, self.robot_yaw = raw_x, raw_y, raw_yaw
@@ -558,7 +555,7 @@ class GlobalFusionNode(Node):
             self.optimizer.apply_global_topology(self.global_walls)
 
         # Publish global fusion result to G2O
-        self.publish_to_g2o(msg.header, current_frame_wall_obs, current_frame_column_obs, self.robot_q)
+        self.publish_to_g2o(msg.header, current_frame_wall_obs, current_frame_column_obs)
 
         # self.robot_trajectory.append((self.robot_x, self.robot_y))
         
@@ -609,16 +606,19 @@ class GlobalFusionNode(Node):
                 return True
         return False
     
-    def publish_to_g2o(self, header, current_frame_wall_obs: list, current_frame_column_obs: list, robot_q):
+    def publish_to_g2o(self, header, current_frame_wall_obs: list, current_frame_column_obs: list):
         obs_array_msg = DetectionWithIDArray()
         obs_array_msg.header = header
-
-        r_mat = R_sci.from_quat([robot_q.x, robot_q.y, robot_q.z, robot_q.w]).as_matrix()
-        r_inv = r_mat.T
 
         # wall -> Line2D
         for w_id, rel_wall, cov_matrix in current_frame_wall_obs:
 
+            local_rho = float(rel_wall[0])
+            local_theta = float(rel_wall[1])
+
+            if math.isnan(local_rho) or math.isnan(local_theta):
+                continue
+                
             det = DetectionWithID()
             det.id = f"{w_id}"
             det.label = "wall"
@@ -627,27 +627,22 @@ class GlobalFusionNode(Node):
             geom.type = Geometry.LINE
             line_msg = Line2D()
             
-            # Local coordinates (cm -> m)
-            local_rho = float(rel_wall[0])
-            local_theta = float(rel_wall[1])
-
-            global_yaw = local_theta + self.robot_yaw
-            N_global = np.array([math.cos(global_yaw), math.sin(global_yaw), 0.0])
-            N_local = r_inv @ N_global
-
-            line_msg.normal.x = N_local[0]
-            line_msg.normal.y = N_local[1]
-            line_msg.normal.z = N_local[2]
+            line_msg.normal.x = math.cos(local_theta)
+            line_msg.normal.y = math.sin(local_theta)
+            line_msg.normal.z = 0.0
             line_msg.distance = local_rho / 100.0
             
             # Covariance (cm -> m)
-            s_tt = float(cov_matrix[1, 1])             # (rad^2)
-            s_td = float(cov_matrix[1, 0]) / 100.0     # (rad*m)
-            s_dt = float(cov_matrix[0, 1]) / 100.0     # (m*rad)
-            s_dd = float(cov_matrix[0, 0]) / 10000.0   # (m^2)
+            s_tt = float(cov_matrix[1, 1])             
+            s_td = float(cov_matrix[1, 0]) / 100.0     
+            s_dt = float(cov_matrix[0, 1]) / 100.0     
+            s_dd = float(cov_matrix[0, 0]) / 10000.0   
+
+            s_dd = max(s_dd, 1e-4)
+            s_tt = max(s_tt, 1e-4)
+
             line_msg.covariance = [s_tt, s_td, s_dt, s_dd]
 
-            # Segment limits: endpoints in the local frame (cm -> m, z = 0).
             x1, y1, x2, y2 = polar2endpoints(np.asarray(rel_wall, dtype=float))
             line_msg.boundary = [
                 Point(x=x1 / 100.0, y=y1 / 100.0, z=0.0),
@@ -660,46 +655,42 @@ class GlobalFusionNode(Node):
 
         # Column -> Cylinder
         for c_id, rel_col in current_frame_column_obs:
+            local_x = float(rel_col[0]) / 100.0
+            local_y = float(rel_col[1]) / 100.0
+            local_r = float(rel_col[2]) / 100.0
+            
+            if math.isnan(local_x) or math.isnan(local_y):
+                continue
+
             det = DetectionWithID()
             det.id = f"{c_id}" 
             det.label = "column"
 
             geom = Geometry()
             geom.type = Geometry.CYLINDER
-            
             cyl_msg = Cylinder()
-            
-            # Center position (cm -> m)
-            local_x = float(rel_col[0]) / 100.0
-            local_y = float(rel_col[1]) / 100.0
             
             cyl_msg.pose = PoseWithCovariance()
             cyl_msg.pose.pose.position.x = local_x
             cyl_msg.pose.pose.position.y = local_y
             cyl_msg.pose.pose.position.z = 0.0
             
-            # No rotation
-            cyl_msg.pose.pose.orientation.w = robot_q.w
-            cyl_msg.pose.pose.orientation.x = -robot_q.x
-            cyl_msg.pose.pose.orientation.y = -robot_q.y
-            cyl_msg.pose.pose.orientation.z = -robot_q.z
+            cyl_msg.pose.pose.orientation.w = 1.0
+            cyl_msg.pose.pose.orientation.x = 0.0
+            cyl_msg.pose.pose.orientation.y = 0.0
+            cyl_msg.pose.pose.orientation.z = 0.0
             
-            # 6x6 Matrix covariance for pose (x, y, z, roll, pitch, yaw)
             cov_6x6 = [0.0] * 36
-            cov_6x6[0] = 0.0025
-            cov_6x6[7] = 0.0025
-            cov_6x6[14] = 1e-6
-            cov_6x6[21] = 1e-6
-            cov_6x6[28] = 1e-6
-            cov_6x6[35] = 1e-6
+            cov_6x6[0]  = 0.01
+            cov_6x6[7]  = 0.01
+            cov_6x6[14] = 0.01
+            cov_6x6[21] = 0.01
+            cov_6x6[28] = 0.01
+            cov_6x6[35] = 0.01
             cyl_msg.pose.covariance = cov_6x6
 
-            # Set radius and height
-            local_r = float(rel_col[2]) / 100.0
             cyl_msg.radius = local_r
             cyl_msg.height = 2.0
-            
-            # Radius variance (assuming error 2cm -> 0.02^2 = 0.0004)
             cyl_msg.dimension_covariance = [0.0004, 0.0, 0.0, 0.01]
             
             geom.cylinder = cyl_msg

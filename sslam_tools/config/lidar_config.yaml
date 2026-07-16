@@ -17,3 +17,8 @@
     accumulate_packets: 10
 
     publish_pointcloud: true
+
+    # Level the point cloud (remove roll/pitch, keep yaw) using the latest
+    # odometry orientation before height-filtering and BEV projection.
+    gravity_compensation: true
+    odometry_topic: "/odom"
