@@ -633,10 +633,10 @@ class GlobalFusionNode(Node):
             line_msg.distance = local_rho / 100.0
             
             # Covariance (cm -> m)
-            s_tt = float(cov_matrix[1, 1])             
-            s_td = float(cov_matrix[1, 0]) / 100.0     
-            s_dt = float(cov_matrix[0, 1]) / 100.0     
-            s_dd = float(cov_matrix[0, 0]) / 10000.0   
+            s_tt = float(cov_matrix[1, 1])
+            s_td = float(cov_matrix[1, 0]) / 100.0
+            s_dt = float(cov_matrix[0, 1]) / 100.0
+            s_dd = float(cov_matrix[0, 0]) / 10000.0
 
             s_dd = max(s_dd, 1e-4)
             s_tt = max(s_tt, 1e-4)

@@ -5,7 +5,7 @@
     VFOV: 22.5
     ROWS: 32
 
-    input_type: "custom_msg" # custom_msg / pointcloud2
+    input_type: "pointcloud2" # custom_msg / pointcloud2
     height_filter_flag: "elevation_grid_filter" # normal / elevation_grid_filter
     MIN_Z: -2000.0
     MAX_Z: 2000.0
@@ -14,11 +14,11 @@
     POINT_COUNT_THRESHOLD: 0
 
     scale_to_mm: 1000.0
-    accumulate_packets: 10
+    accumulate_packets: 1
 
     publish_pointcloud: true
 
     # Level the point cloud (remove roll/pitch, keep yaw) using the latest
     # odometry orientation before height-filtering and BEV projection.
-    gravity_compensation: true
+    gravity_compensation: false
     odometry_topic: "/odom"

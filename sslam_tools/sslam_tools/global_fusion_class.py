@@ -33,7 +33,7 @@ class GlobalWall:
         self.hits = 1
         self.misses = 0
         # Variance parameters
-        range_var = 100.0 # cm^2
+        range_var = 10.0 ** 2 # cm^2
         angle_var = np.deg2rad(10.0) ** 2 # rad^2
         self.covariance_state = np.array([[range_var, 0], 
                                           [0, angle_var]]) # state covariance
@@ -126,7 +126,7 @@ class GlobalColumn:
 
 class ManhattanWorldOptimizer:
     def __init__(self):
-        self.manhatten_theta_thresh = np.deg2rad(15.0) # Wall adsorption angle threshold
+        self.manhatten_theta_thresh = np.deg2rad(5.0) # Wall adsorption angle threshold
         self.corner_connect_dist_thresh = 10.0 # Corner closure threshold
         self.min_intersection_angle = np.deg2rad(85.0)
         self.max_intersection_angle = np.deg2rad(95.0)
