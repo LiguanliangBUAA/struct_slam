@@ -21,4 +21,8 @@
     # Level the point cloud (remove roll/pitch, keep yaw) using the latest
     # odometry orientation before height-filtering and BEV projection.
     gravity_compensation: true
+    # Move every point, by its own timestamp, into the sensor frame at the frame's stamp
+    # (latest point) using odometry, so an accumulated frame is one consistent snapshot
+    # while the UAV moves/turns. Needs per-point time (Livox CustomMsg); no-op otherwise.
+    deskew: true
     odometry_topic: "/odom"

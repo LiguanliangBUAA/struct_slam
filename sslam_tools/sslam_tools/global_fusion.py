@@ -79,6 +79,14 @@ class GlobalFusionConfig:
     obs_dist_std_per_m_cm: float = 0.0
     obs_angle_std_deg: float = 10.0
 
+    # Frames taken while turning faster than this (deg/s) neither update the global map nor
+    # publish observations: their wall angles are off by several degrees (grows with the yaw
+    # rate) while the declared covariance is tight. 0 disables the check.
+    max_yaw_rate_deg_s: float = 0.0
+    # Keep skipping for this long after the last too-fast frame: the frames while the turn
+    # decelerates are still biased, all walls the same way. 0 disables.
+    yaw_rate_settle_sec: float = 0.0
+
 class GlobalFusionNode(Node):
     def __init__(self):
         super().__init__('global_fusion_node')
@@ -105,6 +113,7 @@ class GlobalFusionNode(Node):
         self.robot_yaw = 0.0
 
         self.last_msg_time = None
+        self.last_fast_turn_time = None  # stamp of the last frame over max_yaw_rate_deg_s
 
         # Record last TF for movement compensation
         self.last_tf_x = None
@@ -420,6 +429,7 @@ class GlobalFusionNode(Node):
     
     def listener_callback(self, msg):
         current_time = rclpy.time.Time.from_msg(msg.header.stamp)
+        turning_too_fast = False
         # Movement compensation using TF
         if self.config.movement_flag and self.last_msg_time is not None:
             try:
@@ -452,12 +462,26 @@ class GlobalFusionNode(Node):
                     self.robot_yaw += dyaw
                     self.robot_yaw %= (2 * math.pi)
 
+                    dt = (current_time - self.last_msg_time).nanoseconds * 1e-9
+                    if (self.config.max_yaw_rate_deg_s > 0.0 and dt > 0.0 and
+                            abs(math.degrees(dyaw)) / dt > self.config.max_yaw_rate_deg_s):
+                        turning_too_fast = True
+                        self.last_fast_turn_time = current_time
+                    elif (self.last_fast_turn_time is not None and
+                            (current_time - self.last_fast_turn_time).nanoseconds * 1e-9
+                            < self.config.yaw_rate_settle_sec):
+                        turning_too_fast = True
+
             except tf2_ros.TransformException as ex:
                 self.get_logger().warn(f"TF transform failed: {ex}")
                 return
 
         self.robot_trajectory.append((self.robot_x, self.robot_y))
         self.last_msg_time = current_time
+
+        if turning_too_fast:
+            # Pose is tracked above; skip mapping and publishing for this frame.
+            return
 
         local_walls_data = np.array(msg.wall_parameters, dtype=np.float32).reshape(-1, 4)
         local_columns_data = np.array(msg.columns_xyr, dtype=np.float32).reshape(-1, 3)
