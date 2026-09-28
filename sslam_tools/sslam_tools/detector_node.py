@@ -19,6 +19,8 @@
 
 import rclpy
 from rclpy.node import Node
+from rclpy.duration import Duration
+from rclpy.time import Time
 from msg_interfaces.msg import LidarData, Objects
 from sensor_msgs.msg import Image
 
@@ -45,6 +47,12 @@ class Detectors_Node(Node):
             self.listener_callback,
             10
         )
+
+        # Added to the scan's stamp before publishing. Downstream nodes look up the robot
+        # pose at this stamp, so a negative value compensates scans whose geometry
+        # corresponds to an earlier pose than their stamp (e.g. stamped at sweep end).
+        self.declare_parameter('stamp_offset_sec', 0.0)
+        self.stamp_offset = Duration(nanoseconds=int(self.get_parameter('stamp_offset_sec').value * 1e9))
 
         self.declare_parameter('detector_type', 'yolo')
         detector_type: str = self.get_parameter('detector_type').value.lower()
@@ -88,7 +96,8 @@ class Detectors_Node(Node):
     def listener_callback(self, msg):
         detection_results = Objects()
         detection_results.header = msg.header
-        detection_results.method = self.detector.name 
+        detection_results.header.stamp = (Time.from_msg(msg.header.stamp) + self.stamp_offset).to_msg()
+        detection_results.method = self.detector.name
         
         start_time = time.time()
 

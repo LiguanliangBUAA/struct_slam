@@ -20,5 +20,5 @@
 
     # Level the point cloud (remove roll/pitch, keep yaw) using the latest
     # odometry orientation before height-filtering and BEV projection.
-    gravity_compensation: false
+    gravity_compensation: true
     odometry_topic: "/odom"

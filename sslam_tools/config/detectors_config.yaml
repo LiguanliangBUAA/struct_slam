@@ -3,6 +3,9 @@ detector_node:
     detector_type: "yolo"
     capture_inference_image: true
 
+    # Time offset between the detection and the LiDAR scan.
+    stamp_offset_sec: 0.0
+
     # Leave empty to load from the installed package share (resource/yolo_model).
     # Set an absolute path here to load a model from elsewhere.
     yolo_model_path: ""
