@@ -37,3 +37,11 @@
     lidar_frame: 'livox_frame' # 'body' # 'drone0/base_link'
 
     manhattan_opt_flag: true
+
+    # Covariance of the observations sent to dps_slam: std = 2 cm + 0.5 cm per m of range,
+    # 1.5 deg. Measured on the grid sim (leveled cloud): dist err median 1.1 / p95 4.1 cm,
+    # angle err median 0.23 / p95 1.36 deg. The old fixed 10 cm / 10 deg under-weighted the
+    # walls so much that yaw kept wandering +-1 deg.
+    obs_dist_std_cm: 2.0
+    obs_dist_std_per_m_cm: 0.5
+    obs_angle_std_deg: 1.5

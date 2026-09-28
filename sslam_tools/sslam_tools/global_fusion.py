@@ -72,6 +72,13 @@ class GlobalFusionConfig:
     svd_lambda_reg: float = 0.5 # Regularization term for SVD correction, higher values lead to more conservative corrections
     stable_hits_threshold: int = 2 # Minimum hits for a global wall to be considered stable and used for yaw correction and SVD weighting
 
+    # Covariance declared for the wall observations sent to the SLAM backend (publish_to_g2o),
+    # separate from GlobalWall's own filter covariance: std_dist = obs_dist_std_cm +
+    # obs_dist_std_per_m_cm * range to the observed segment. Defaults keep the old fixed 10 cm / 10 deg.
+    obs_dist_std_cm: float = 10.0
+    obs_dist_std_per_m_cm: float = 0.0
+    obs_angle_std_deg: float = 10.0
+
 class GlobalFusionNode(Node):
     def __init__(self):
         super().__init__('global_fusion_node')
@@ -632,18 +639,17 @@ class GlobalFusionNode(Node):
             line_msg.normal.z = 0.0
             line_msg.distance = local_rho / 100.0
             
-            # Covariance (cm -> m)
-            s_tt = float(cov_matrix[1, 1])
-            s_td = float(cov_matrix[1, 0]) / 100.0
-            s_dt = float(cov_matrix[0, 1]) / 100.0
-            s_dd = float(cov_matrix[0, 0]) / 10000.0
-
-            s_dd = max(s_dd, 1e-4)
-            s_tt = max(s_tt, 1e-4)
-
-            line_msg.covariance = [s_tt, s_td, s_dt, s_dd]
-
             x1, y1, x2, y2 = polar2endpoints(np.asarray(rel_wall, dtype=float))
+
+            # Covariance [theta, distance] in rad^2 / m^2, growing with range to the segment
+            range_m = math.hypot(x1 + x2, y1 + y2) / 200.0  # midpoint, cm -> m
+            dist_std_m = (self.config.obs_dist_std_cm
+                          + self.config.obs_dist_std_per_m_cm * range_m) / 100.0
+            s_dd = max(dist_std_m ** 2, 1e-4)
+            s_tt = max(math.radians(self.config.obs_angle_std_deg) ** 2, 1e-4)
+
+            line_msg.covariance = [s_tt, 0.0, 0.0, s_dd]
+
             line_msg.boundary = [
                 Point(x=x1 / 100.0, y=y1 / 100.0, z=0.0),
                 Point(x=x2 / 100.0, y=y2 / 100.0, z=0.0),
