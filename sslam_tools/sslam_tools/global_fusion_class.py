@@ -49,6 +49,14 @@ class GlobalWall:
         #                                 [0, 0, 0, range_var]])  # measurement covariance
 
     def update(self, rho_mea, theta_mea):
+        # (rho, theta) and (-rho, theta + pi) are the same line. Measurements arrive with rho >= 0,
+        # but the state need not be (the Manhattan step recomputes rho without that constraint),
+        # and for a line passing near the origin a small tilt flips which form is the rho >= 0
+        # one. Blending a theta ~180 deg away turns the wall ~90 deg into a phantom line through
+        # the origin, so express the measurement in the state's form first.
+        if np.cos(theta_mea - self.theta) < 0.0:
+            rho_mea, theta_mea = -rho_mea, theta_mea + np.pi
+
         # Ommit prediction step
         # Measurement update
         K = self.covariance_state @ np.linalg.inv(self.covariance_state + self.covariance_mea)
