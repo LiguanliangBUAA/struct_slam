@@ -54,6 +54,7 @@ setup(
             'global_fusion = sslam_tools.global_fusion:main',
             'eval_node = sslam_tools.eval:main',
             'image_saver = sslam_tools.image_saver:main',
+            'odom_covariance = sslam_tools.odom_covariance:main',
 
             'detector_node_3D_RANSAC = sslam_tools.detector_node_3D_RANSAC:main',
             'detector_node_3D_RegionGrow = sslam_tools.detector_node_3D_RegionGrow:main',

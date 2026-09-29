@@ -58,6 +58,14 @@ def launch_nodes(context):
            name='global_fusion_node',
            parameters=[fusion_config, *extra, use_sim_time]
        ),
+       # /odom -> /odom_cov with the pose covariance set from parameters (see odom_covariance.py);
+       # passes /odom through unchanged unless the extra params file sets its std values.
+       Node(
+           package='sslam_tools',
+           executable='odom_covariance',
+           name='odom_covariance_node',
+           parameters=[*extra, use_sim_time]
+       ),
     ]
 
 def generate_launch_description():
