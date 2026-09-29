@@ -1,7 +1,7 @@
 detector_node:
   ros__parameters:
     detector_type: "yolo"
-    capture_inference_image: true
+    capture_inference_image: false
 
     # Time offset between the detection and the LiDAR scan.
     stamp_offset_sec: 0.0
