@@ -32,6 +32,7 @@ from dps_slam_msgs.msg import Line2D, Cylinder
 
 import numpy as np
 import threading
+import time
 import cv2
 import math
 from dataclasses import dataclass, fields
@@ -59,6 +60,10 @@ class GlobalFusionConfig:
     base_img_size: int = 4096
     sensor_posx: int = 2048
     sensor_posy: int = 2048
+    # Minimum wall-clock time between debug map images (0 = every frame). Snapshotting and
+    # drawing the growing global map every frame starves this process's TF intake (GIL), and
+    # frames whose TF has not arrived are dropped.
+    image_period_sec: float = 0.0
 
     # Movement config
     movement_flag: bool = True
@@ -87,6 +92,19 @@ class GlobalFusionConfig:
     # decelerates are still biased, all walls the same way. 0 disables.
     yaw_rate_settle_sec: float = 0.0
 
+    # Revisit association. The pose used here drifts with the odometry between observations of
+    # a wall, so a wall seen again after a loop can land beyond the match gates and get a new
+    # id; the backend then never learns it is the same wall and cannot correct the drift. Each
+    # wall's distance and angle gates therefore widen by rate * distance flown since it
+    # was last matched (capped), and once matched again the widening decays by
+    # revisit_slack_decay per matched frame instead of vanishing at once, so it outlasts the
+    # frames until the backend's correction reaches the pose. Rates of 0 disable it.
+    revisit_dist_per_m_cm: float = 0.0
+    revisit_angle_per_m_deg: float = 0.0
+    revisit_max_extra_dist_cm: float = 30.0
+    revisit_max_extra_angle_deg: float = 5.0
+    revisit_slack_decay: float = 0.9
+
 class GlobalFusionNode(Node):
     def __init__(self):
         super().__init__('global_fusion_node')
@@ -106,7 +124,10 @@ class GlobalFusionNode(Node):
 
         # TF initialization
         self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        # Own spin thread: listener_callback blocks in lookup_transform waiting for the TF at the
+        # scan stamp, and on the node's single-threaded executor the /tf callbacks that would
+        # deliver it could not run meanwhile, so every lookup ahead of the buffer timed out.
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
 
         self.robot_x = 0.0
         self.robot_y = 0.0
@@ -114,6 +135,7 @@ class GlobalFusionNode(Node):
 
         self.last_msg_time = None
         self.last_fast_turn_time = None  # stamp of the last frame over max_yaw_rate_deg_s
+        self.travel_since_map_update_m = 0.0  # distance flown since the last map update (revisit gates)
 
         # Record last TF for movement compensation
         self.last_tf_x = None
@@ -147,6 +169,7 @@ class GlobalFusionNode(Node):
         self.image_publish_thread = threading.Thread(target=self.image_worker_loop, daemon=True)
         self.image_publish_thread.start()
         self.render_data = None
+        self.last_render_time = None  # time.monotonic() of the last snapshot for the image
 
         # G2O Publisher
         self.graph_opt_publisher =self.create_publisher(DetectionWithIDArray, 'semantic_observations', 10)
@@ -243,16 +266,35 @@ class GlobalFusionNode(Node):
             delta_distance = abs(overlap)
         return delta_dis, delta_angle, delta_distance
     
-    def compute_cost(self, local_w: np.ndarray, global_w: np.ndarray) -> float:
+    def revisit_slack(self, g_wall: GlobalWall) -> tuple:
+        """Extra (distance [cm], angle [rad]) gate for a wall, from the travel since it was last matched."""
+        extra_dist = min(self.config.revisit_max_extra_dist_cm,
+                         self.config.revisit_dist_per_m_cm * g_wall.stale_m)
+        extra_angle = min(self.config.revisit_max_extra_angle_deg,
+                          self.config.revisit_angle_per_m_deg * g_wall.stale_m)
+        return extra_dist, np.deg2rad(extra_angle)
+
+    def compute_cost(self, local_w: np.ndarray, g_wall: GlobalWall) -> float:
+        # A wall seen from its other side is the other face of a partition, never this one.
+        if not g_wall.same_side(self.robot_x, self.robot_y):
+            return np.inf
+        global_w = np.array([g_wall.rho, g_wall.theta, g_wall.d1, g_wall.d2])
         d_diff, a_diff, delta_distance = self.diff_calc(local_w, global_w)
 
-        if d_diff > self.config.match_dist_thresh or a_diff > self.match_angle_thresh:
+        extra_dist, extra_angle = self.revisit_slack(g_wall)
+        dist_thresh = self.config.match_dist_thresh + extra_dist
+        angle_thresh = self.match_angle_thresh + extra_angle
+        if d_diff > dist_thresh or a_diff > angle_thresh:
             return np.inf
+        # The along-wall gap is not widened: that let collinear walls merge across openings,
+        # and a revisit of a wall overlaps the part seen before anyway.
         if delta_distance > self.config.overlap_thresh:
             return np.inf
-        
-        dist_cost = d_diff / self.config.match_dist_thresh
-        angle_cost = a_diff / self.match_angle_thresh
+
+        # Normalised by the widened gates, so a revisited wall competes with fresh ones on
+        # how far it is relative to its own uncertainty.
+        dist_cost = d_diff / dist_thresh
+        angle_cost = a_diff / angle_thresh
         
         cost = dist_cost + angle_cost
         return cost
@@ -314,8 +356,7 @@ class GlobalFusionNode(Node):
         # Compute cost matrix
         for i in range(N):
             for j in range(M):
-                gw_array = np.array([candidate_globals[j].rho, candidate_globals[j].theta, candidate_globals[j].d1, candidate_globals[j].d2])
-                cost = self.compute_cost(pred_global_walls[i], gw_array)
+                cost = self.compute_cost(pred_global_walls[i], candidate_globals[j])
                 if cost < gate:
                     cost_matrix[i, j] = cost
         # Dummy nodes for unmatched local and global walls
@@ -459,6 +500,7 @@ class GlobalFusionNode(Node):
 
                     self.robot_x += dx
                     self.robot_y += dy
+                    self.travel_since_map_update_m += math.hypot(dx, dy) / 100.0
                     self.robot_yaw += dyaw
                     self.robot_yaw %= (2 * math.pi)
 
@@ -512,7 +554,8 @@ class GlobalFusionNode(Node):
 
         for l_idx in unmatched_local_indices:
             new_rho, new_theta, new_d1, new_d2 = final_global_walls_data[l_idx]
-            new_wall = GlobalWall(self.next_wall_id, new_rho, new_theta, new_d1, new_d2)
+            new_wall = GlobalWall(self.next_wall_id, new_rho, new_theta, new_d1, new_d2,
+                                  observer_xy=(self.robot_x, self.robot_y))
             self.global_walls.append(new_wall)
             matched_global_ids.add(new_wall.id)
 
@@ -549,8 +592,10 @@ class GlobalFusionNode(Node):
         for g_wall in self.global_walls:
             if g_wall.id in matched_global_ids:
                 g_wall.misses = 0
+                g_wall.stale_m *= self.config.revisit_slack_decay
                 walls_to_keep.append(g_wall)
             else:
+                g_wall.stale_m += self.travel_since_map_update_m
                 center_x = g_wall.rho * np.cos(g_wall.theta)
                 center_y = g_wall.rho * np.sin(g_wall.theta)
                 dist_to_robot = np.hypot(center_x - self.robot_x, center_y - self.robot_y)
@@ -563,6 +608,7 @@ class GlobalFusionNode(Node):
                 else:
                     self.get_logger().info(f'Removing wall ID {g_wall.id}.')
         self.global_walls = walls_to_keep
+        self.travel_since_map_update_m = 0.0
         
         columns_to_keep = []
         for g_column in self.global_columns:
@@ -590,8 +636,12 @@ class GlobalFusionNode(Node):
 
         # self.robot_trajectory.append((self.robot_x, self.robot_y))
         
-        # Debug image drawing
-        if self.config.publish_img_flag:
+        # Debug image drawing, at most every image_period_sec
+        now = time.monotonic()
+        if self.config.publish_img_flag and (
+                self.last_render_time is None or
+                now - self.last_render_time >= self.config.image_period_sec):
+            self.last_render_time = now
             with self.image_lock:
                 import copy
                 self.render_data = (

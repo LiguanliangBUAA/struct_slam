@@ -21,8 +21,12 @@ import numpy as np
 from sslam_tools.geometry_functions_ import polar2endpoints, intersection_cal_based_on_polar
 
 class GlobalWall:
-    def __init__(self, id, rho, theta, d1, d2):
+    def __init__(self, id, rho, theta, d1, d2, observer_xy=None):
         self.id = id
+        # Where the wall was first seen from: fixes which of its sides faces free space.
+        self.observer_xy = observer_xy
+        # Distance [m] flown since last matched (decayed on matches): widens the match gates.
+        self.stale_m = 0.0
         # Geometric parameters
         self.rho = rho
         self.theta = theta
@@ -74,6 +78,16 @@ class GlobalWall:
         # Update observation parameters
         self.hits += 1
         self.misses = 0
+
+    def same_side(self, x, y) -> bool:
+        """Whether (x, y) is on the side of the line the wall was first observed from.
+        Signed distances use the current (rho, theta), so a flip of representation cancels."""
+        if self.observer_xy is None:
+            return True
+        n = np.array([np.cos(self.theta), np.sin(self.theta)])
+        side_first = n @ np.asarray(self.observer_xy, dtype=float) - self.rho
+        side_now = n @ np.array([x, y], dtype=float) - self.rho
+        return side_first * side_now > 0.0
 
     def recalculate_endpoints_on_line(self, new_raw_endpoints: np.ndarray):
         # Recalculate endpoints on the updated line

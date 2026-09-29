@@ -20,6 +20,13 @@
     match_dist_thresh: 20.0 # cm
     match_angle_thresh_deg: 5.0 # deg
     overlap_thresh: 10.0 # cm
+    # Revisit association: gates widen with the distance flown since a wall was last matched
+    # (see global_fusion.py). Sim LIO drifts ~1.1 cm/m (41 cm over the 36 m tfdrift flight).
+    revisit_dist_per_m_cm: 1.5
+    revisit_angle_per_m_deg: 0.1
+    revisit_max_extra_dist_cm: 30.0
+    revisit_max_extra_angle_deg: 5.0
+    revisit_slack_decay: 0.9
     gate_threshold: 0.8
     max_misses_thresh: 5
     sensor_range: 500.0 # cm
