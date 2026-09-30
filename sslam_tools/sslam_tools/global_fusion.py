@@ -78,32 +78,23 @@ class GlobalFusionConfig:
     stable_hits_threshold: int = 2 # Minimum hits for a global wall to be considered stable and used for yaw correction and SVD weighting
 
     # Covariance declared for the wall observations sent to the SLAM backend (publish_to_g2o),
-    # separate from GlobalWall's own filter covariance: std_dist = obs_dist_std_cm +
-    # obs_dist_std_per_m_cm * range to the observed segment. Defaults keep the old fixed 10 cm / 10 deg.
     obs_dist_std_cm: float = 10.0
     obs_dist_std_per_m_cm: float = 0.0
     obs_angle_std_deg: float = 10.0
 
-    # Frames taken while turning faster than this (deg/s) neither update the global map nor
-    # publish observations: their wall angles are off by several degrees (grows with the yaw
-    # rate) while the declared covariance is tight. 0 disables the check.
+    # Frames taken while turning faster than the threshold
     max_yaw_rate_deg_s: float = 0.0
-    # Keep skipping for this long after the last too-fast frame: the frames while the turn
-    # decelerates are still biased, all walls the same way. 0 disables.
+    # Keep skipping for this long after the last too-fast frame
     yaw_rate_settle_sec: float = 0.0
 
-    # Revisit association. The pose used here drifts with the odometry between observations of
-    # a wall, so a wall seen again after a loop can land beyond the match gates and get a new
-    # id; the backend then never learns it is the same wall and cannot correct the drift. Each
-    # wall's distance and angle gates therefore widen by rate * distance flown since it
-    # was last matched (capped), and once matched again the widening decays by
-    # revisit_slack_decay per matched frame instead of vanishing at once, so it outlasts the
-    # frames until the backend's correction reaches the pose. Rates of 0 disable it.
+    # Revisit association. 
     revisit_dist_per_m_cm: float = 0.0
     revisit_angle_per_m_deg: float = 0.0
     revisit_max_extra_dist_cm: float = 30.0
     revisit_max_extra_angle_deg: float = 5.0
     revisit_slack_decay: float = 0.9
+    # Ambiguous association. Second cost >= ratio * first cost is considered ambiguous and dropped. 0 = disabled.
+    ambiguity_cost_ratio: float = 0.0
 
 class GlobalFusionNode(Node):
     def __init__(self):
@@ -290,14 +281,14 @@ class GlobalFusionNode(Node):
         # and a revisit of a wall overlaps the part seen before anyway.
         if delta_distance > self.config.overlap_thresh:
             return np.inf
+        # Admission is judged against the widened gates ...
+        if d_diff / dist_thresh + a_diff / angle_thresh >= self.config.gate_threshold:
+            return np.inf
 
-        # Normalised by the widened gates, so a revisited wall competes with fresh ones on
-        # how far it is relative to its own uncertainty.
-        dist_cost = d_diff / dist_thresh
-        angle_cost = a_diff / angle_thresh
-        
-        cost = dist_cost + angle_cost
-        return cost
+        # ... but the cost that ranks candidates uses the base gates, so a stale wall does not
+        # look closer than a fresh one at the same offset (with the widened gates a stale
+        # neighbour 0.5 m away could undercut the right wall).
+        return d_diff / self.config.match_dist_thresh + a_diff / self.match_angle_thresh
     
     def manhattan_pre_filter(self, local_walls_data: np.ndarray) -> np.ndarray:
         if not self.config.manhattan_opt_flag or len(self.global_walls) < 3:
@@ -349,19 +340,30 @@ class GlobalFusionNode(Node):
 
         N = len(pred_global_walls)
         M = len(candidate_globals)
-        gate = self.config.gate_threshold
 
         cost_matrix = np.full((N + M, N + M), np.inf)
 
-        # Compute cost matrix
+        # Compute cost matrix (compute_cost already applies the gates)
         for i in range(N):
             for j in range(M):
-                cost = self.compute_cost(pred_global_walls[i], candidate_globals[j])
-                if cost < gate:
-                    cost_matrix[i, j] = cost
-        # Dummy nodes for unmatched local and global walls
-        for i in range(N): cost_matrix[i, M + i] = gate
-        for j in range(M): cost_matrix[N + j, j] = gate
+                cost_matrix[i, j] = self.compute_cost(pred_global_walls[i], candidate_globals[j])
+
+        # Drop observations that fit two walls about equally well.
+        ambiguous = set()
+        ratio = self.config.ambiguity_cost_ratio
+        if ratio > 0.0 and M >= 2:
+            for i in range(N):
+                costs = np.sort(cost_matrix[i, :M])
+                if np.isfinite(costs[1]) and costs[1] < ratio * max(costs[0], 0.1):
+                    ambiguous.add(i)
+                    cost_matrix[i, :M] = np.inf
+
+        # Dummy nodes for unmatched local and global walls. Ranking costs are on the base gates
+        # and can exceed gate_threshold for a revisited wall, so the dummies cost far more than
+        # any admitted pair: every admissible match is taken, then the cheapest assignment.
+        dummy = 1e3
+        for i in range(N): cost_matrix[i, M + i] = dummy
+        for j in range(M): cost_matrix[N + j, j] = dummy
         cost_matrix[N:, M:] = 0.0
 
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
@@ -374,7 +376,7 @@ class GlobalFusionNode(Node):
                     matched_pairs.append((r, c))
                 else:
                     unmatched_local_indices.append(r)
-            elif r < N and c >= M:
+            elif r < N and c >= M and r not in ambiguous:
                 unmatched_local_indices.append(r)
 
         # yaw_errors = []
