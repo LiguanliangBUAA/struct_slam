@@ -39,7 +39,8 @@ def launch_nodes(context):
             package='coord_conversion_cpp',
             executable='converter_livox',
             name='converter',
-            parameters=[lidar_config, *extra, use_sim_time]
+            parameters=[lidar_config, *extra, use_sim_time],
+            remappings=[('/livox/points', LaunchConfiguration('lidar_topic'))]
         ),
        Node(
            package='sslam_tools',
@@ -75,9 +76,12 @@ def generate_launch_description():
         'extra_params_file', default_value='',
         description='Optional parameter file applied on top of the package configs '
                     '(e.g. overrides for real-flight data)')
+    lidar_topic_arg = DeclareLaunchArgument(
+        'lidar_topic', default_value='/livox/points')
 
     return LaunchDescription([
         use_sim_time_arg,
         extra_params_file_arg,
+        lidar_topic_arg,
         OpaqueFunction(function=launch_nodes),
     ])
