@@ -13,22 +13,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Republish odometry with a configured pose covariance.
-
-dps_slam weighs each odometry edge by the covariance of the odometry message (with its
-calculate_odom_covariance off). The odometry's own covariance does not say how much to trust
-it against the wall observations, so this node sets it from parameters, next to the wall
-observation covariance of global_fusion: e.g. a tiny attitude variance to keep FAST-LIO's
-heading and let walls correct position only. A std <= 0 leaves that part as received.
-
-Start anchoring: dps_slam fixes only the first keyframe, and with a uniform per-edge covariance
-a loop closure spreads its residual over the whole chain, so the walls around the start (and
-everything after) shift along with it. For the first anchor_distance_m of path flown the
-position covariance is set to anchor_position_std_m instead, which ties the start keyframes,
-and the walls seen from them, to the fixed origin; the residual then goes to the rest of the
-flight (0 disables). Attitude is better left free (anchor_attitude_std_deg <= 0 keeps
-attitude_std_deg): tying it too locks the odometry's early heading error into the whole map.
-"""
+"""Republish odometry with a configured pose covariance, read by dps_slam as the odometry edge
+covariance. A std <= 0 keeps the received value. anchor_distance_m > 0 uses anchor_position_std_m
+for the first meters flown, so loop closures do not drag the start."""
 
 import math
 
@@ -45,9 +32,9 @@ class OdomCovarianceNode(Node):
         self.declare_parameter('output_topic', '/odom_cov')
         self.declare_parameter('position_std_m', 0.0)      # x, y, z
         self.declare_parameter('attitude_std_deg', 0.0)    # roll, pitch, yaw
-        self.declare_parameter('anchor_distance_m', 0.0)   # path length flown; 0 disables
+        self.declare_parameter('anchor_distance_m', 0.0)   # m flown, 0 disables
         self.declare_parameter('anchor_position_std_m', 0.005)
-        self.declare_parameter('anchor_attitude_std_deg', 0.0)  # <= 0: attitude_std_deg
+        self.declare_parameter('anchor_attitude_std_deg', 0.0)  # <= 0: use attitude_std_deg
         self.position_var = self.get_parameter('position_std_m').value ** 2
         self.attitude_var = math.radians(self.get_parameter('attitude_std_deg').value) ** 2
         self.override_position = self.get_parameter('position_std_m').value > 0.0

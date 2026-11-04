@@ -9,6 +9,7 @@
 #include "msg_interfaces/msg/lidar_data.hpp"
 #include "livox_ros_driver2/msg/custom_msg.hpp"
 #include "elevation_grid_filter.hpp"
+#include "structure_filter.hpp"
 
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
@@ -49,6 +50,12 @@ public:
     this->declare_parameter("deskew", true);
     this->declare_parameter("odometry_topic", "/odom");
 
+    // Structure filter: remove small non-structural objects before the BEV projection
+    this->declare_parameter("structure_filter_flag", false);
+    this->declare_parameter("structure_grid_size", 100.0); // mm
+    this->declare_parameter("structure_min_width", 500.0); // mm
+    this->declare_parameter("structure_gap_cells", 2);
+
     this->input_type_ = this->get_parameter("input_type").as_string();
     this->height_filter_flag_ = this->get_parameter("height_filter_flag").as_string();
     this->min_z_ = static_cast<float>(this->get_parameter("MIN_Z").as_double());
@@ -62,6 +69,7 @@ public:
     this->gravity_compensation_ = this->get_parameter("gravity_compensation").as_bool();
     this->deskew_ = this->get_parameter("deskew").as_bool();
     std::string odometry_topic = this->get_parameter("odometry_topic").as_string();
+    this->structure_filter_flag_ = this->get_parameter("structure_filter_flag").as_bool();
 
     if (this->gravity_compensation_ || this->deskew_) {
       this->odom_subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
@@ -91,6 +99,14 @@ public:
 
     if (height_filter_flag_ == "elevation_grid_filter") {
       grid_filter_ = std::make_unique<elevation_grid_filter::ElevationGridFilter>(grid_size_, z_diff_threshold_, point_count_threshold_);
+    }
+
+    if (structure_filter_flag_) {
+      structure_filter_ = std::make_unique<structure_filter::StructureFilter>(
+        static_cast<float>(this->get_parameter("structure_grid_size").as_double()),
+        static_cast<float>(this->get_parameter("structure_min_width").as_double()),
+        this->get_parameter("structure_gap_cells").as_int());
+      RCLCPP_INFO(this->get_logger(), "Structure filter enabled.");
     }
 
     acc_points_.reserve(300000);
@@ -146,6 +162,11 @@ private:
   std::vector<float> filtered_z_;
 
   std::unique_ptr<elevation_grid_filter::ElevationGridFilter> grid_filter_;
+  bool structure_filter_flag_;
+  std::unique_ptr<structure_filter::StructureFilter> structure_filter_;
+  std::vector<float> structure_x_;
+  std::vector<float> structure_y_;
+  std::vector<float> structure_z_;
 
   rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr subscription_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pc2_subscription_;
@@ -298,6 +319,12 @@ private:
       filtered_x_ = raw_x_;
       filtered_y_ = raw_y_;
       filtered_z_ = raw_z_;
+    }
+    if (structure_filter_flag_) {
+      structure_filter_->filter(filtered_x_, filtered_y_, filtered_z_, structure_x_, structure_y_, structure_z_);
+      filtered_x_.swap(structure_x_);
+      filtered_y_.swap(structure_y_);
+      filtered_z_.swap(structure_z_);
     }
 
     std_msgs::msg::Header header;

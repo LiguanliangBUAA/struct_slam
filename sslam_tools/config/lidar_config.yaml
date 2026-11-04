@@ -26,3 +26,12 @@
     # while the UAV moves/turns. Needs per-point time (Livox CustomMsg); no-op otherwise.
     deskew: true
     odometry_topic: "/odom"
+
+    # structure filter: remove small non-structural objects (people, poles, clutter) before the BEV projection (false)
+    structure_filter_flag: false
+    # structure filter cell size, mm (100)
+    structure_grid_size: 100.0
+    # minimum horizontal length of a connected cluster to keep, mm (500)
+    structure_min_width: 500.0
+    # empty cells bridged when connecting a cluster (2)
+    structure_gap_cells: 2

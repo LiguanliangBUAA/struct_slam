@@ -95,26 +95,11 @@ class GlobalFusionConfig:
     revisit_slack_decay: float = 0.9
     # Ambiguous association. Second cost >= ratio * first cost is considered ambiguous and dropped. 0 = disabled.
     ambiguity_cost_ratio: float = 0.0
-    # Frame consistency on revisits. Associating each wall on its own, a pose that drifted by more
-    # than half the spacing of repeated structure (alcoves 0.5 m, openings 1 m) makes the nearest
-    # wall the wrong one, and wrong loop closures can flip the whole graph. When a frame has
-    # candidates among walls whose revisit gates are widened by more than
-    # consistency_trigger_slack_cm (below half that spacing, walls associate on their own as
-    # usual), a common pose offset (dx, dy, dyaw)
-    # is fitted to all of the frame's candidates at once (RANSAC over the walls' normal offsets)
-    # and, if at least consistency_min_inliers walls agree on it (and more than on no offset),
-    # the frame is associated with the offset applied and the base gates only. A wall supports an
-    # offset when, shifted by it, it lies within consistency_inlier_dist_cm of a global wall and
-    # overlaps it along the wall (within overlap_thresh). Repeated structure can support a second
-    # offset (e.g. 0.5 m off, one alcove over): if one that differs by more than
-    # consistency_inlier_dist_cm along the supporting walls' normals has as much support, or no offset has enough, the walls of the frame that have a candidate
-    # within the widened gates are dropped (neither matched nor made new walls) and the rest are
-    # associated with the base gates, rather than risk a wrong loop closure. The offset is used for this frame
-    # only (the pose here follows dps_slam's TF, which corrects itself later).
+    # Frame consistency on revisits: fit one pose offset to all walls of the frame. False = disabled.
     frame_consistency_flag: bool = False
-    consistency_inlier_dist_cm: float = 10.0
-    consistency_trigger_slack_cm: float = 20.0
-    consistency_min_inliers: int = 3
+    consistency_inlier_dist_cm: float = 10.0  # cm, wall agrees with an offset within this
+    consistency_trigger_slack_cm: float = 20.0  # cm, revisit gate widening that triggers the check
+    consistency_min_inliers: int = 3  # walls needed to accept an offset
 
 class GlobalFusionNode(Node):
     def __init__(self):
@@ -135,9 +120,7 @@ class GlobalFusionNode(Node):
 
         # TF initialization
         self.tf_buffer = tf2_ros.Buffer()
-        # Own spin thread: listener_callback blocks in lookup_transform waiting for the TF at the
-        # scan stamp, and on the node's single-threaded executor the /tf callbacks that would
-        # deliver it could not run meanwhile, so every lookup ahead of the buffer timed out.
+        # Own spin thread, so /tf keeps arriving while listener_callback waits in lookup_transform
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
 
         self.robot_x = 0.0
@@ -146,9 +129,9 @@ class GlobalFusionNode(Node):
 
         self.last_msg_time = None
         self.last_fast_turn_time = None  # stamp of the last frame over max_yaw_rate_deg_s
-        self.travel_since_map_update_m = 0.0  # distance flown since the last map update (revisit gates)
-        self.suppress_revisit_slack = False  # frame associated with a consistency offset: base gates only
-        self.unverified_revisit = False  # revisit frame with no consistent offset (see estimate_frame_offset)
+        self.travel_since_map_update_m = 0.0  # m, for revisit gates
+        self.suppress_revisit_slack = False  # base gates only this frame
+        self.unverified_revisit = False  # revisit without consistent offset
         self.revisit_candidates = set()
 
         # Record last TF for movement compensation
@@ -302,17 +285,14 @@ class GlobalFusionNode(Node):
         angle_thresh = self.match_angle_thresh + extra_angle
         if d_diff > dist_thresh or a_diff > angle_thresh:
             return np.inf
-        # The along-wall gap is not widened: that let collinear walls merge across openings,
-        # and a revisit of a wall overlaps the part seen before anyway.
+        # Along-wall gap is not widened (walls would merge across openings)
         if delta_distance > self.config.overlap_thresh:
             return np.inf
-        # Admission is judged against the widened gates ...
+        # Admission: widened gates
         if d_diff / dist_thresh + a_diff / angle_thresh >= self.config.gate_threshold:
             return np.inf
 
-        # ... but the cost that ranks candidates uses the base gates, so a stale wall does not
-        # look closer than a fresh one at the same offset (with the widened gates a stale
-        # neighbour 0.5 m away could undercut the right wall).
+        # Ranking: base gates, so a stale wall does not look closer than it is
         return d_diff / self.config.match_dist_thresh + a_diff / self.match_angle_thresh
     
     def manhattan_pre_filter(self, local_walls_data: np.ndarray) -> np.ndarray:
@@ -354,18 +334,14 @@ class GlobalFusionNode(Node):
         return None
 
     def estimate_frame_offset(self, local_walls: np.ndarray):
-        """Common pose offset (dx [cm], dy [cm], dyaw [rad]) that lines this frame's walls up with
-        revisited global walls; None when no widened gate is involved (associate as usual), or
-        'unverified' when no single offset is supported well enough. Sets self.revisit_candidates
-        to the local walls that have a revisited wall (widened by more than
-        consistency_trigger_slack_cm) among their candidates."""
+        """Pose offset (dx, dy [cm], dyaw [rad]) aligning the frame with revisited walls.
+        None: no revisit in the frame. 'unverified': no single consistent offset."""
         if len(local_walls) == 0 or len(self.global_walls) == 0:
             return None
         pred, _ = self.transform_incoming_data(local_walls, np.zeros((0, 3)))
         inlier = self.config.consistency_inlier_dist_cm
 
-        # Candidate pairs within the widened gates (the overlap gate is left out: a drift along
-        # the wall moves the overlap too).
+        # Candidate pairs within the widened gates (no overlap gate)
         pairs, revisit = [], set()
         for i, w in enumerate(pred):
             for g in self.global_walls:
@@ -382,7 +358,7 @@ class GlobalFusionNode(Node):
         if not revisit:
             return None
 
-        # Rotation: median of the pairs' angle differences, folded into (-90, 90] deg.
+        # Rotation: median angle difference
         dth = [((g.theta - pred[i][1]) + np.pi / 2) % np.pi - np.pi / 2 for i, g in pairs]
         dyaw = float(np.median(dth))
         saved_yaw = self.robot_yaw
@@ -390,9 +366,7 @@ class GlobalFusionNode(Node):
         pred, _ = self.transform_incoming_data(local_walls, np.zeros((0, 3)))
         self.robot_yaw = saved_yaw
 
-        # Each pair constrains the translation along the global wall's normal (n . t = r) and,
-        # through the overlap, along it: the local extent [a1, a2] shifted by u . t must reach
-        # the global extent [b1, b2].
+        # Per pair: normal constraint n . t = r, and along-wall extents for the overlap check
         wall_idx, normals, offsets, dirs, local_ext, global_ext = [], [], [], [], [], []
         for i, g in pairs:
             n = np.array([np.cos(g.theta), np.sin(g.theta)])
@@ -426,19 +400,17 @@ class GlobalFusionNode(Node):
         zero_support = support(np.zeros(2))[0]
         if best_n < self.config.consistency_min_inliers:
             return 'unverified'
-        # A rival must differ where the best offset's inliers constrain it: shifts along walls
-        # that are all parallel are unconstrained, not a second explanation.
+        # Rival offset: as much support, different along the inliers' normals (e.g. one alcove over)
         _, best_ok = support(best_t)
         best_normals = normals[best_ok]
         if any(n_sup >= best_n and np.max(np.abs(best_normals @ (t - best_t))) > inlier
                for n_sup, t in scored[1:]):
             return 'unverified'
         if best_n <= zero_support:
-            # The pose is already consistent: associate with the base gates, no offset.
+            # Pose already consistent
             return 0.0, 0.0, 0.0
 
-        # Least squares over the inliers; the minimum-norm solution leaves a direction no inlier
-        # constrains (all walls parallel) uncorrected.
+        # Least squares over the inliers (min-norm: unconstrained direction left at 0)
         t = np.linalg.lstsq(best_normals, offsets[best_ok], rcond=0.3)[0]
         return float(t[0]), float(t[1]), dyaw
 
@@ -457,12 +429,12 @@ class GlobalFusionNode(Node):
 
         cost_matrix = np.full((N + M, N + M), np.inf)
 
-        # Compute cost matrix (compute_cost already applies the gates)
+        # Compute cost matrix
         for i in range(N):
             for j in range(M):
                 cost_matrix[i, j] = self.compute_cost(pred_global_walls[i], candidate_globals[j])
 
-        # Drop observations that fit two walls about equally well.
+        # Ambiguous observations
         ambiguous = set()
         ratio = self.config.ambiguity_cost_ratio
         if ratio > 0.0 and M >= 2:
@@ -471,15 +443,13 @@ class GlobalFusionNode(Node):
                 if np.isfinite(costs[1]) and costs[1] < ratio * max(costs[0], 0.1):
                     ambiguous.add(i)
                     cost_matrix[i, :M] = np.inf
-        # Revisit frame without a consistent offset: drop the walls a revisit could explain.
+        # Unverified revisit: drop the walls with a revisited candidate
         if self.unverified_revisit:
             for i in self.revisit_candidates:
                 ambiguous.add(i)
                 cost_matrix[i, :M] = np.inf
 
-        # Dummy nodes for unmatched local and global walls. Ranking costs are on the base gates
-        # and can exceed gate_threshold for a revisited wall, so the dummies cost far more than
-        # any admitted pair: every admissible match is taken, then the cheapest assignment.
+        # Dummy nodes for unmatched local and global walls (high cost: take every admissible match)
         dummy = 1e3
         for i in range(N): cost_matrix[i, M + i] = dummy
         for j in range(M): cost_matrix[N + j, j] = dummy
@@ -652,13 +622,12 @@ class GlobalFusionNode(Node):
         # Manhattan pre-filtering
         local_walls_data = self.manhattan_pre_filter(local_walls_data)
 
-        # Frame consistency: associate (and update the map) with the offset that lines the frame
-        # up with revisited walls, for this frame only.
+        # Frame consistency: offset applied for this frame only
         saved_pose = (self.robot_x, self.robot_y, self.robot_yaw)
         frame_offset = self.estimate_frame_offset(local_walls_data) if self.config.frame_consistency_flag else None
         self.unverified_revisit = isinstance(frame_offset, str)
         if self.unverified_revisit:
-            # No single consistent offset: base gates, and drop the walls only a revisit could match.
+            # No consistent offset: base gates only
             self.suppress_revisit_slack = True
         elif frame_offset is not None:
             self.robot_x += frame_offset[0]
@@ -856,7 +825,7 @@ class GlobalFusionNode(Node):
             
             x1, y1, x2, y2 = polar2endpoints(np.asarray(rel_wall, dtype=float))
 
-            # Covariance [theta, distance] in rad^2 / m^2, growing with range to the segment
+            # Covariance [theta, distance], growing with range
             range_m = math.hypot(x1 + x2, y1 + y2) / 200.0  # midpoint, cm -> m
             dist_std_m = (self.config.obs_dist_std_cm
                           + self.config.obs_dist_std_per_m_cm * range_m) / 100.0
