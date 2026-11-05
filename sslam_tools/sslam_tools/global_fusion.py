@@ -742,7 +742,7 @@ class GlobalFusionNode(Node):
         self.unverified_revisit = False
 
         # Publish global fusion result to G2O
-        self.publish_to_g2o(msg.header, current_frame_wall_obs, current_frame_column_obs)
+        self.publish_to_g2o(msg.header, current_frame_wall_obs, [])
 
         # self.robot_trajectory.append((self.robot_x, self.robot_y))
         
@@ -799,7 +799,8 @@ class GlobalFusionNode(Node):
     
     def publish_to_g2o(self, header, current_frame_wall_obs: list, current_frame_column_obs: list):
         obs_array_msg = DetectionWithIDArray()
-        obs_array_msg.header = header
+        obs_array_msg.header.stamp = header.stamp
+        obs_array_msg.header.frame_id = self.config.lidar_frame
 
         # wall -> Line2D
         for w_id, rel_wall, cov_matrix in current_frame_wall_obs:
