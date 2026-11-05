@@ -141,9 +141,11 @@ class LocalFusionNode(Node):
                 class_member_mask = (labels == label)
                 cluster_data = polar_data[class_member_mask]
                 # Simple fusion: average the polar coordinates
-                mean_d = np.mean(cluster_data[:, 0])
-                sin_sum = np.sum(np.sin(cluster_data[:, 1]))
-                cos_sum = np.sum(np.cos(cluster_data[:, 1]))
+                # Weight by segment length: a short segment has a poorly known line
+                weights = np.abs(cluster_data[:, 3] - cluster_data[:, 2])
+                mean_d = np.average(cluster_data[:, 0], weights=weights)
+                sin_sum = np.sum(weights * np.sin(cluster_data[:, 1]))
+                cos_sum = np.sum(weights * np.cos(cluster_data[:, 1]))
                 mean_alpha = np.arctan2(sin_sum, cos_sum) % (2 * np.pi)
 
                 p0_x = mean_d * np.cos(mean_alpha)

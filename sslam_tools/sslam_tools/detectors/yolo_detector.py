@@ -76,24 +76,24 @@ class YoloDetector(ImageBasedDetector[YoloDetectorConfig]):
                 vertices_laser = self.img_to_laser(vertices_img)
                 vertices = vertices_laser.flatten().tolist()
 
-                if class_name in ['walls', 'shadows']:
+                if class_name == 'walls': # in ['walls', 'shadows']:
                     vertices = np.array(vertices, dtype=np.float32).reshape((4, 2))
                     p1, p2 = geo_funcs.calculate_walls_endpoints(vertices)
                     # Flatten endpoints: [x1, y1, x2, y2]
                     end_points = [float(p1[0]), float(p1[1]), float(p2[0]), float(p2[1])]
                     ss_collection.endpoints.extend(end_points)
-                elif class_name == 'columns':
-                    vertices = np.array(vertices, dtype=np.float32).reshape((4, 2))
-                    center, radius = geo_funcs.calculate_columns_center_radius(vertices)
-                    center = center.flatten().tolist()
-                    ss_collection.columns_circles_centers.extend(center)
-                    ss_collection.columns_circles_radius.append(float(radius))
-                elif class_name == 'others':
-                    vertices = np.array(vertices, dtype=np.float32).reshape((4, 2))
-                    center, radius = geo_funcs.calculate_columns_center_radius(vertices)
-                    center = center.flatten().tolist()
-                    ss_collection.others_circles_centers.extend(center)
-                    ss_collection.others_circles_radius.append(float(radius))
+                # elif class_name == 'columns':
+                #     vertices = np.array(vertices, dtype=np.float32).reshape((4, 2))
+                #     center, radius = geo_funcs.calculate_columns_center_radius(vertices)
+                #     center = center.flatten().tolist()
+                #     ss_collection.columns_circles_centers.extend(center)
+                #     ss_collection.columns_circles_radius.append(float(radius))
+                # elif class_name == 'others':
+                #     vertices = np.array(vertices, dtype=np.float32).reshape((4, 2))
+                #     center, radius = geo_funcs.calculate_columns_center_radius(vertices)
+                #     center = center.flatten().tolist()
+                #     ss_collection.others_circles_centers.extend(center)
+                #     ss_collection.others_circles_radius.append(float(radius))
 
         return ss_collection
     
