@@ -96,6 +96,10 @@ class GlobalFusionConfig:
     # Ambiguous association. Second cost >= ratio * first cost is considered ambiguous and dropped. 0 = disabled.
     ambiguity_cost_ratio: float = 0.0
     # Frame consistency on revisits: fit one pose offset to all walls of the frame. False = disabled.
+    # Candidates that are one split wall (parallel, within this distance [cm]) are not ambiguous. 0 = off
+    ambiguity_same_line_cm: float = 0.0
+    # A local wall that lost the one-to-one assignment still updates its best admissible global wall
+    multi_match_flag: bool = False
     frame_consistency_flag: bool = False
     consistency_inlier_dist_cm: float = 10.0  # cm, wall agrees with an offset within this
     consistency_trigger_slack_cm: float = 20.0  # cm, revisit gate widening that triggers the check
@@ -439,8 +443,15 @@ class GlobalFusionNode(Node):
         ratio = self.config.ambiguity_cost_ratio
         if ratio > 0.0 and M >= 2:
             for i in range(N):
-                costs = np.sort(cost_matrix[i, :M])
+                order = np.argsort(cost_matrix[i, :M])
+                costs = cost_matrix[i, order]
                 if np.isfinite(costs[1]) and costs[1] < ratio * max(costs[0], 0.1):
+                    if self.config.ambiguity_same_line_cm > 0.0:
+                        g1, g2 = candidate_globals[order[0]], candidate_globals[order[1]]
+                        d_line, a_line, _ = self.diff_calc(np.array([g1.rho, g1.theta, g1.d1, g1.d2]),
+                                                           np.array([g2.rho, g2.theta, g2.d1, g2.d2]))
+                        if d_line < self.config.ambiguity_same_line_cm and a_line < self.match_angle_thresh:
+                            continue
                     ambiguous.add(i)
                     cost_matrix[i, :M] = np.inf
         # Unverified revisit: drop the walls with a revisited candidate
@@ -555,6 +566,16 @@ class GlobalFusionNode(Node):
         #         # self.robot_x += delta_pos[0]
         #         # self.robot_y += delta_pos[1]
         #         pass
+
+        if self.config.multi_match_flag:
+            still_unmatched = []
+            for l_idx in unmatched_local_indices:
+                best = int(np.argmin(cost_matrix[l_idx, :M]))
+                if np.isfinite(cost_matrix[l_idx, best]):
+                    matched_pairs.append((l_idx, best))
+                else:
+                    still_unmatched.append(l_idx)
+            unmatched_local_indices = still_unmatched
 
         final_matches = [(l_idx, candidate_globals[g_idx].id) for l_idx, g_idx in matched_pairs]
         return final_matches, unmatched_local_indices
