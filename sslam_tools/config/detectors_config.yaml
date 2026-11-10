@@ -11,6 +11,8 @@ detector_node:
     yolo_model_path: ""
     yolo_model_name:  "yolon1024HD-clean-AdamW_openvino_model" # "Yolov8n-FJ.pt" # "yolon1024HD-clean-AdamW_openvino_model" # "yolon1024p2.pt" # "yolon1024HD-clean.pt" #"yolon640_openvino_model" #"yolon640.pt" #"YOLOv8n-obb_TRAINED_lgl_1_openvino_model"
     label: false
+    # "cpu" or "cuda:0"; CUDA needs a .pt model in yolo_model_name
+    device: "cpu"
 
     truncate: false
 

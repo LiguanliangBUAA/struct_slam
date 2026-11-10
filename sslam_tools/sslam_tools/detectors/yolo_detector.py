@@ -33,6 +33,9 @@ class YoloDetectorConfig(ImageBasedDetectorConfig):
     # (resource/yolo_model); an absolute path overrides that.
     yolo_model_path: str = ''
     yolo_model_name: str = 'YOLOv8n-obb_TRAINED_lgl_1_openvino_model'
+    # Inference device: 'cpu' or 'cuda:0'. CUDA needs a PyTorch (.pt) model; OpenVINO models
+    # run on the CPU whatever this says.
+    device: str = 'cpu'
 
     label: bool = True
 
@@ -60,7 +63,7 @@ class YoloDetector(ImageBasedDetector[YoloDetectorConfig]):
     
     def inference(self, processed_image: np.ndarray) -> SSCollection:
         cv2.cvtColor(processed_image, cv2.COLOR_GRAY2RGB, dst=self.rgb_image)
-        self.yolo_results = self.yoloModel(self.rgb_image, device='cpu')
+        self.yolo_results = self.yoloModel(self.rgb_image, device=self.config.device)
 
         ss_collection = SSCollection()
         for result in self.yolo_results:
