@@ -114,6 +114,26 @@ class GlobalWall:
         # Update endpoints and d1, d2
         self.endpoints = np.array([p_start[0], p_start[1], p_end[0], p_end[1]])
 
+    def absorb(self, other: 'GlobalWall'):
+        """Take over another segment of the same wall: extend the extent to cover both.
+
+        The line (rho, theta) is kept, not averaged: the lateral offset between the two
+        segments is the drift accumulated between their sightings, which the SLAM backend
+        resolves, so averaging here would hide it and draw the wall in between.
+        """
+        dir_vec = np.array([-np.sin(self.theta), np.cos(self.theta)])
+        center_pt = np.array([self.rho * np.cos(self.theta), self.rho * np.sin(self.theta)])
+        projections = [np.dot(pt - center_pt, dir_vec) for pt in (
+            self.endpoints[0:2], self.endpoints[2:4], other.endpoints[0:2], other.endpoints[2:4])]
+        self.d1 = min(projections)
+        self.d2 = max(projections)
+        p_start = center_pt + self.d1 * dir_vec
+        p_end = center_pt + self.d2 * dir_vec
+        self.endpoints = np.array([p_start[0], p_start[1], p_end[0], p_end[1]])
+        self.hits += other.hits
+        self.misses = 0
+        self.stale_m = min(self.stale_m, other.stale_m)
+
     def recalculate_d_parameters(self):
         # Recalculate d1 and d2 based on current endpoints
         dir_vec = np.array([-np.sin(self.theta), np.cos(self.theta)])

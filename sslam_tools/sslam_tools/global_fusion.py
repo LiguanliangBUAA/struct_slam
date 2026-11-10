@@ -105,6 +105,21 @@ class GlobalFusionConfig:
     consistency_trigger_slack_cm: float = 20.0  # cm, revisit gate widening that triggers the check
     consistency_min_inliers: int = 3  # walls needed to accept an offset
 
+    # Merge of global walls that grew into each other (two segments of one wall, first seen
+    # apart). The older id is kept; the newer one is removed from the map.
+    merge_flag: bool = False
+    merge_angle_thresh_deg: float = 5.0  # deg, between the two lines
+    # cm, lateral offset between the two segments. Keep it under match_dist_thresh: a segment
+    # outside the match gate but inside this one is re-created and re-merged every frame.
+    # Replay of the sim bag: true merges <= 10 cm, false walls (pipes) 23-35 cm off.
+    merge_dist_thresh: float = 15.0
+    merge_gap_thresh: float = 100.0  # cm, along-wall gap between them (overlap = 0)
+    merge_min_hits: int = 5  # both segments must be this stable
+    # After a merge, this many observations of the kept wall are also sent under the removed
+    # id, each with twice the variance (same total information). The SLAM backend thus sees
+    # both planes measured from the same keyframes and pulls them together.
+    merge_bridge_obs: int = 10
+
 class GlobalFusionNode(Node):
     def __init__(self):
         super().__init__('global_fusion_node')
@@ -155,6 +170,9 @@ class GlobalFusionNode(Node):
         self.global_walls: list[GlobalWall] = [] # List of GlobalWall instances
         self.next_column_id: int = 0
         self.global_columns: list[GlobalColumn] = [] # List of GlobalColumn instances
+        # Merged walls: kept id -> [[removed id, observations still to bridge], ...]
+        self.merge_bridges: dict[int, list[list[int]]] = {}
+        self.merge_angle_thresh = np.deg2rad(self.config.merge_angle_thresh_deg)
         self.active_debug_corners = []
         self.robot_trajectory = []
 
@@ -677,7 +695,7 @@ class GlobalFusionNode(Node):
                 matched_global_ids.add(target_wall.id)
 
                 if target_wall.hits >= 5:
-                    current_frame_wall_obs.append((target_wall.id, local_walls_data[l_idx], target_wall.covariance_mea))
+                    current_frame_wall_obs.append((target_wall.id, local_walls_data[l_idx], target_wall.covariance_mea, 1.0))
 
         for l_idx in unmatched_local_indices:
             new_rho, new_theta, new_d1, new_d2 = final_global_walls_data[l_idx]
@@ -736,6 +754,10 @@ class GlobalFusionNode(Node):
                     self.get_logger().info(f'Removing wall ID {g_wall.id}.')
         self.global_walls = walls_to_keep
         self.travel_since_map_update_m = 0.0
+
+        if self.config.merge_flag:
+            self.merge_grown_walls(matched_global_ids)
+            current_frame_wall_obs = self.add_bridge_observations(current_frame_wall_obs)
         
         columns_to_keep = []
         for g_column in self.global_columns:
@@ -785,6 +807,82 @@ class GlobalFusionNode(Node):
                 )
             self.new_image_event.set()
 
+    def merge_candidate(self, keep: GlobalWall, other: GlobalWall) -> bool:
+        """Whether two stable global walls are two segments of one wall that grew together."""
+        if min(keep.hits, other.hits) < self.config.merge_min_hits:
+            return False
+        # Same face: each first seen from the side the other was, and the robot on that side.
+        # Rules out the two faces of a partition, which are parallel and a few cm apart.
+        if other.observer_xy is not None and not keep.same_side(*other.observer_xy):
+            return False
+        if keep.observer_xy is not None and not other.same_side(*keep.observer_xy):
+            return False
+        if not keep.same_side(self.robot_x, self.robot_y):
+            return False
+        k = np.array([keep.rho, keep.theta, keep.d1, keep.d2])
+        o = np.array([other.rho, other.theta, other.d1, other.d2])
+        d_ko, angle, gap = self.diff_calc(o, k)  # other's endpoints to keep's line
+        d_ok, _, _ = self.diff_calc(k, o)  # and the reverse, so neither may lean away
+        return (angle < self.merge_angle_thresh
+                and max(d_ko, d_ok) < self.config.merge_dist_thresh
+                and gap < self.config.merge_gap_thresh)
+
+    def merge_grown_walls(self, updated_ids: set):
+        """Merge each wall updated this frame with any stable wall it has grown into.
+
+        Only walls that just grew can have come to meet another, so the others are not
+        compared among themselves. The older id is kept.
+        """
+        merged = True
+        while merged:
+            merged = False
+            by_id = {w.id: w for w in self.global_walls}
+            for wid in sorted(updated_ids):
+                wall = by_id.get(wid)
+                if wall is None:
+                    continue
+                for other in self.global_walls:
+                    if other.id == wid:
+                        continue
+                    keep, gone = (wall, other) if wall.id < other.id else (other, wall)
+                    if not self.merge_candidate(keep, gone):
+                        continue
+                    lateral = self.diff_calc(np.array([gone.rho, gone.theta, gone.d1, gone.d2]),
+                                             np.array([keep.rho, keep.theta, keep.d1, keep.d2]))[0]
+                    segments = f'{np.round(keep.endpoints).astype(int).tolist()} + ' \
+                               f'{np.round(gone.endpoints).astype(int).tolist()} cm'
+                    keep.absorb(gone)
+                    self.global_walls = [w for w in self.global_walls if w.id != gone.id]
+                    # Walls bridged to the removed one are now bridged to the kept one
+                    bridges = self.merge_bridges.setdefault(keep.id, [])
+                    bridges.extend(self.merge_bridges.pop(gone.id, []))
+                    bridges.append([gone.id, self.config.merge_bridge_obs])
+                    updated_ids = (updated_ids - {gone.id}) | {keep.id}
+                    self.get_logger().info(
+                        f'Merged wall ID {gone.id} into ID {keep.id} '
+                        f'(lateral offset {lateral:.1f} cm, length {keep.d2 - keep.d1:.0f} cm): {segments}')
+                    merged = True
+                    break
+                if merged:
+                    break
+
+    def add_bridge_observations(self, wall_obs: list) -> list:
+        """Duplicate observations of merged walls under the removed ids, with split information."""
+        out = []
+        for w_id, rel_wall, cov, scale in wall_obs:
+            bridges = [b for b in self.merge_bridges.get(w_id, []) if b[1] > 0]
+            if not bridges:
+                out.append((w_id, rel_wall, cov, scale))
+                continue
+            # n + 1 edges from one measurement: each with (n + 1) times the variance
+            split = scale * (len(bridges) + 1)
+            out.append((w_id, rel_wall, cov, split))
+            for b in bridges:
+                out.append((b[0], rel_wall, cov, split))
+                b[1] -= 1
+            self.merge_bridges[w_id] = [b for b in self.merge_bridges[w_id] if b[1] > 0]
+        return out
+
     def is_occluded(self, target_x, target_y, incoming_walls_data, incoming_columns_data):
         # Distance from sensor to target
         target_dist = np.hypot(target_x - self.robot_x, target_y - self.robot_y)
@@ -824,7 +922,7 @@ class GlobalFusionNode(Node):
         obs_array_msg.header.frame_id = self.config.lidar_frame
 
         # wall -> Line2D
-        for w_id, rel_wall, cov_matrix in current_frame_wall_obs:
+        for w_id, rel_wall, cov_matrix, cov_scale in current_frame_wall_obs:
 
             local_rho = float(rel_wall[0])
             local_theta = float(rel_wall[1])
@@ -851,8 +949,9 @@ class GlobalFusionNode(Node):
             range_m = math.hypot(x1 + x2, y1 + y2) / 200.0  # midpoint, cm -> m
             dist_std_m = (self.config.obs_dist_std_cm
                           + self.config.obs_dist_std_per_m_cm * range_m) / 100.0
-            s_dd = max(dist_std_m ** 2, 1e-4)
-            s_tt = max(math.radians(self.config.obs_angle_std_deg) ** 2, 1e-4)
+            # cov_scale > 1: one measurement sent under several ids (merge bridges)
+            s_dd = max(dist_std_m ** 2, 1e-4) * cov_scale
+            s_tt = max(math.radians(self.config.obs_angle_std_deg) ** 2, 1e-4) * cov_scale
 
             line_msg.covariance = [s_tt, 0.0, 0.0, s_dd]
 
