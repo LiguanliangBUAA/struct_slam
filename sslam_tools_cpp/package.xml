@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>sslam_tools_cpp</name>
+  <version>0.0.0</version>
+  <description>C++ implementation of the LiDAR-BEV structural detector: wall detection (YOLO-OBB/LSD/Hough/RANSAC), local and global wall fusion, and odometry covariance relay.</description>
+  <maintainer email="guanliang.li@alumnos.upm.es">Guanliang Li</maintainer>
+  <maintainer email="pedro.espinosa@upm.es">Pedro Espinosa Angulo</maintainer>
+  <maintainer email="stapia@fi.upm.es">Santiago Tapia Fernández</maintainer>
+  <license>GPL-3.0-or-later</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>msg_interfaces</depend>
+  <depend>dps_slam_msgs</depend>
+  <depend>ament_index_cpp</depend>
+  <depend>eigen</depend>
+  <depend>libopencv-dev</depend>
+  <depend>yaml-cpp</depend>
+  <!-- .pt models: ultralytics in an embedded Python interpreter -->
+  <build_depend>pybind11-dev</build_depend>
+  <depend>python3-dev</depend>
+
+  <exec_depend>coord_conversion_cpp</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

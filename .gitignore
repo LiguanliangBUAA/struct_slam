@@ -1,8 +1,5 @@
-# Struct SLAM yolo.pt
-sslam_tools/resource/yolo_model/*.pt
-sslam_tools/resource/yolo_model/best_int8_openvino_model
-sslam_tools/resource/yolo_model/YOLOv8n-obb_TRAINED_lgl_1_openvino_model
-sslam_tools/resource/yolo_model/yolo1024HD-clean_AdamW_int8_openvino_model
+# Struct SLAM: PyTorch models are not tracked
+sslam_tools_cpp/resource/yolo_model/*.pt
 
 # symlink cached files
 __pycache__/
