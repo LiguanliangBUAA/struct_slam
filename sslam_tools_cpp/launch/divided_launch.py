@@ -36,13 +36,21 @@ def launch_nodes(context):
     # Loaded last, so its values override the package configs for whichever nodes it names.
     extra_params_file = LaunchConfiguration('extra_params_file').perform(context)
     extra = [extra_params_file] if extra_params_file else []
+    # Optional overrides, applied last; empty keeps the config files' values
+    odometry_topic = LaunchConfiguration('odometry_topic').perform(context)
+    observations_topic = LaunchConfiguration('observations_topic').perform(context)
+    sensor_frame = LaunchConfiguration('sensor_frame').perform(context)
+    converter_odom = [{'odometry_topic': odometry_topic}] if odometry_topic else []
+    covariance_odom = [{'input_topic': odometry_topic}] if odometry_topic else []
+    fusion_frame = [{'lidar_frame': sensor_frame}] if sensor_frame else []
+    observations = [('semantic_observations', observations_topic)] if observations_topic else []
 
     return [
         Node(
             package='coord_conversion_cpp',
             executable='converter_livox',
             name='converter',
-            parameters=[lidar_config, *extra, use_sim_time],
+            parameters=[lidar_config, *extra, use_sim_time, *converter_odom],
             remappings=[('/livox/points', LaunchConfiguration('lidar_topic'))]
         ),
         Node(
@@ -61,7 +69,8 @@ def launch_nodes(context):
             package='sslam_tools_cpp',
             executable='global_fusion',
             name='global_fusion_node',
-            parameters=[fusion_config, *extra, use_sim_time]
+            parameters=[fusion_config, *extra, use_sim_time, *fusion_frame],
+            remappings=observations
         ),
         # /odom -> /odom_cov with the pose covariance set from parameters; passes /odom
         # through unchanged unless the extra params file sets its std values.
@@ -69,7 +78,7 @@ def launch_nodes(context):
             package='sslam_tools_cpp',
             executable='odom_covariance',
             name='odom_covariance_node',
-            parameters=[*extra, use_sim_time]
+            parameters=[*extra, use_sim_time, *covariance_odom]
         ),
     ]
 
@@ -82,5 +91,14 @@ def generate_launch_description():
                               description='Optional parameter file applied on top of the package '
                                           'configs (e.g. overrides for real-flight data)'),
         DeclareLaunchArgument('lidar_topic', default_value='/livox/points'),
+        DeclareLaunchArgument('odometry_topic', default_value='',
+                              description='Odometry for deskew/leveling and odom_covariance input '
+                                          '(empty: from the config files)'),
+        DeclareLaunchArgument('observations_topic', default_value='',
+                              description='Topic of the wall observations for the SLAM backend '
+                                          '(empty: semantic_observations)'),
+        DeclareLaunchArgument('sensor_frame', default_value='',
+                              description='TF frame of the LiDAR pose for global_fusion '
+                                          '(empty: lidar_frame from the config files)'),
         OpaqueFunction(function=launch_nodes),
     ])
